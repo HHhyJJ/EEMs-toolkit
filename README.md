@@ -23,7 +23,7 @@ Windows 10，Python 3.9.6，采用的额外的包及版本见下表：
 ------
 ## 安装EEMs-toolkit
 ```python
-pip install EEMs-toolkit==0.1.0
+pip install EEMs-toolkit
 ```
 
 
@@ -136,7 +136,7 @@ pip install EEMs-toolkit==0.1.0
 
    ```python
    # -*- coding = utf-8 -*-
-   from EEM_toolkit import EEMs_Dataset, read_sample_log, read_eems, read_abs, read_blank
+   from EEMs_toolkit import EEMs_Dataset, read_sample_log, read_eems, read_abs, read_blank
    import pickle
    
    """
