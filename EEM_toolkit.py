@@ -1,6 +1,5 @@
 # -*- coding = utf-8 -*-
 # @TIME : 2023/01/10 12:29
-# @Author : HY
 # @File : EEM_toolkit.py
 # @Software : PyCharm
 
