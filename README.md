@@ -1,6 +1,6 @@
-# **EEM_toolkit**
+# **EEMs-toolkit**
 
-EEM_toolkit是一个可以在Python上对三维荧光（EEM）进行平行因子分析（PARAFAC）的工具包，功能大致类似于MATLAB的drEEM toolbox。
+EEMs-toolkit是一个可以在Python上对三维荧光（EEM）进行平行因子分析（PARAFAC）的工具包，功能大致类似于MATLAB的drEEM toolbox。
 
 
 
@@ -21,9 +21,9 @@ Windows 10，Python 3.9.6，采用的额外的包及版本见下表：
 |   joblib   | 1.2.0  |
 
 ------
-## 安装EEM-toolkit
+## 安装EEMs-toolkit
 ```python
-pip install EEM-toolkit==0.1.0
+pip install EEMs-toolkit==0.1.0
 ```
 
 
