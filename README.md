@@ -21,7 +21,10 @@ Windows 10，Python 3.9.6，采用的额外的包及版本见下表：
 |   joblib   | 1.2.0  |
 
 ------
-
+## 安装EEM-toolkit
+```python
+pip install EEM-toolkit==0.1.0
+```
 
 
 ## 功能简介
