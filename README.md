@@ -227,6 +227,21 @@ pip install EEMs-toolkit
    data.plot_core_consistency_and_explanation()
    for i in range(2, 6 + 1):
        data.plot_residual_error(i)
+    """
+   因为要分析完前面的结果才能确定组分数，重复跑模型还是很花时间的，所以将跑完的模型
+   先保存
+   """
+   with open('result.pickle', 'wb') as f:
+       pickle.dump(data, f)
+   
+   ```
+   
+   ```python
+   """
+   导入已经跑完的模型，下面开始生成结果
+   """
+   with open('result.pickle', 'rb') as f:
+       data = pickle.load(f)
    """
    7. 确定组分数，后面的步骤只剩出图和数据导出（如果需要）：分半分析图、组分图、
    载荷图、（FMax图）
