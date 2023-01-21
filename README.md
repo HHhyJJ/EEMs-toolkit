@@ -227,7 +227,7 @@ pip install EEMs-toolkit
    data.plot_core_consistency_and_explanation()
    for i in range(2, 6 + 1):
        data.plot_residual_error(i)
-    """
+   """
    因为要分析完前面的结果才能确定组分数，重复跑模型还是很花时间的，所以将跑完的模型
    先保存
    """
