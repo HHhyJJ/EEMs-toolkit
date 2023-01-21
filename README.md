@@ -237,6 +237,8 @@ pip install EEMs-toolkit
    ```
    
    ```python
+   import pickle
+   
    """
    导入已经跑完的模型，下面开始生成结果
    """
