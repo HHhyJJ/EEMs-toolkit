@@ -149,7 +149,7 @@ pip install EEMs-toolkit
    sample_log = read_sample_log(r'd:\Documents\PycharmProjects\parafac\Example\SampleLog.xlsx')
    Abs, Abs_wave = read_abs(sample_log, r'd:\Documents\PycharmProjects\parafac\Example\abs')
    blank = read_blank(sample_log, r'd:\Documents\PycharmProjects\parafac\Example\blank')
-   c, fl = read_eems(d, r'd:\Documents\PycharmProjects\parafac\Example\eem')
+   c, fl = read_eems(sample_log, r'd:\Documents\PycharmProjects\parafac\Example\eem')
    
    x, ex, em = c
    Data = EEMs_Dataset(x, ex, em, file_list=fl)
