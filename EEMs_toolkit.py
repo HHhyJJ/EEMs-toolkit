@@ -8,7 +8,7 @@ import tensorly as tl
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata, interp1d
 from scipy.optimize import curve_fit
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 from tensorly.decomposition import non_negative_parafac_hals
 from joblib import Parallel, delayed
 import os
@@ -168,7 +168,7 @@ def slope_fit(Abs, Abs_wave, rsq=0.95, long_range=None):
     return d
 
 
-class EEMs_Dataset(object):
+class EEMs_Dataset:
     """
     The object of EEMs dataset.
     """
@@ -262,7 +262,8 @@ class EEMs_Dataset(object):
             for j in range(filter_size):
                 x, y = center - i, center - j
                 kernel[i, j] = -(x ** 2 + y ** 2) / (2 * sigma ** 2)
-        kernel /= np.sum(np.exp(kernel))
+        kernel = np.exp(kernel)
+        kernel /= np.sum(kernel)
         t = np.zeros((self.nem, self.nex))
         for j, i in enumerate(self.x):
             xx = np.pad(i, center, mode='reflect')
@@ -349,7 +350,7 @@ class EEMs_Dataset(object):
             for i in range(self.nem):
                 for j in range(self.nex):
                     correct[k, i, j] = 0.5 * (Abs[k, em_index[i]] + Abs[k, ex_index[j]])
-        self.x *= np.exp(correct)
+        self.x *= np.power(10, correct)
         print('Inner effect correction done.')
 
     def raman_areal(self, blank, ex=350, em_range=None, freq=3382):
@@ -393,8 +394,10 @@ class EEMs_Dataset(object):
             Biological index: Ex 310, Em 380 divided by 430
                 Reference DOI: 10.1016/j.orggeochem.2009.03.002
         """
-        ex = np.arange(self.ex.min(), self.ex.max() + 1)
-        em = np.arange(self.em.min(), self.em.max() + 1)
+        ex = np.arange(np.ceil(self.ex.min()), np.floor(self.ex.max()) + 1)
+        em = np.arange(np.ceil(self.em.min()), np.floor(self.em.max()) + 1)
+        ex_index = {i: j for j, i in enumerate(ex)}
+        em_index = {i: j for j, i in enumerate(em)}
         if np.any(ex == 254):
             hix_bool = True
         else:
@@ -404,15 +407,18 @@ class EEMs_Dataset(object):
         fl, fre, hix, bix = [], [], [], []
         for i in self.x:
             index = np.where(~np.isnan(i.astype('float')))
-            fitted = griddata((self.ex[index[1]], self.em[index[0]]), i[index], (x, y), method='cubic')
-            fl.append((fitted[em == 470, ex == 370] / fitted[em == 520, ex == 370]).min())
-            fre.append((fitted[em == 380, ex == 310] /
-                        fitted[np.where(em == 420)[0][0]:np.where(em == 435)[0][0] + 1, ex == 310].max()).min())
+            fitted = griddata((self.ex[index[1]], self.em[index[0]]), i[index],
+                              (x, y), method='linear')
+            scan370 = savgol_filter(fitted[:, ex_index[370]], 21, 2)
+            fl.append(scan370[em_index[470]] / scan370[em_index[520]])
+            scan310 = savgol_filter(fitted[:, ex_index[310]], 21, 2)
+            fre.append(scan310[em_index[380]] / scan310[em_index[420]:em_index[436]].max())
             if hix_bool:
-                v1 = fitted[np.where(em == 435)[0][0]:np.where(em == 480)[0][0] + 1, ex == 254].sum()
-                v2 = v1 + fitted[np.where(em == 300)[0][0]:np.where(em == 345)[0][0] + 1, ex == 254].sum()
-                hix.append((v1 / v2).min())
-            bix.append((fitted[em == 380, ex == 310] / fitted[em == 430, ex == 310]).min())
+                scan254 = savgol_filter(fitted[:, ex_index[254]], 21, 2)
+                v1 = scan254[em_index[435]:em_index[481]].sum()
+                v2 = v1 + scan254[em_index[300]:em_index[346]].sum()
+                hix.append(v1 / v2)
+            bix.append(scan310[em_index[380]] / scan310[em_index[430]])
         return fl, fre, hix, bix
 
     #  FRI
