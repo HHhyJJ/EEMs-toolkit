@@ -478,6 +478,7 @@ class EEMs_Dataset:
                                      self.em[index[j][1][1]:index[j][1][0] + 1])
                 p[i, j] = phi[i, j] * s[j]
         p = (p.T / p.sum(axis=1).T).T
+        s = s.reshape((1, 5))
         return p, phi, s
 
     #  Parallel Factors Analysis
