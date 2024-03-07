@@ -262,7 +262,9 @@ pip install EEMs-toolkit
    ```
 
    
+## Star History
 
+[![Star History Chart](https://api.star-history.com/svg?repos=HHhyJJ/EEMs-toolkit&type=Date)](https://star-history.com/#HHhyJJ/EEMs-toolkit&Date)
 
 
 
