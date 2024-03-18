@@ -260,6 +260,9 @@ pip install EEMs-toolkit
    # data.open_fluor(fac)
    
    ```
+   
+## Releases 中应用程序教程
+   [EEMs-toolkit GUI 视频教程](https://vdn6.vzuu.com/HD/cfa8f6b8-a9c6-11ed-960b-5ed3f9500830-v8_f1_t1_kRaXhKHB.mp4?pkey=AAXbXzDJWG1Yj7biKhY2Q7W-PVcwYhgc7uwjk-UQy181sn-BWT8O07xQsKT696Y3kOaKz-M3-QjBf_rCHAmoWbYH&c=avc.8.0&f=mp4&pu=e59e796c&bu=1513c7c2&expiration=1710763055&v=ks6&pp=ChMxNDAxNjIzODY1NzM5NTc5MzkyGGMiC2ZlZWRfY2hvaWNlMhMxMzY5MDA1NjA4NTk5OTA0MjU3PXu830Q%3D&pf=Web&pt=zhihu)
 
    
 ## Star History
