@@ -1,3 +1,16 @@
+- [**EEMs-toolkit**](#eems-toolkit)
+  * [开发环境](#开发环境)
+  * [安装EEMs-toolkit](#安装eems-toolkit)
+  * [功能简介](#功能简介)
+    + [1. 数据导入](#1-数据导入)
+    + [2. 预处理](#2-预处理)
+    + [3. PARAFAC分析](#3-parafac分析)
+    + [4. 结果展示](#4-结果展示)
+    + [5. 其他功能](#5-其他功能)
+  * [测试示例](#测试示例)
+  * [Releases 中应用程序教程](#releases-中应用程序教程)
+
+
 # **EEMs-toolkit**
 
 EEMs-toolkit是一个可以在Python上对三维荧光（EEM）进行平行因子分析（PARAFAC）的工具包，功能大致类似于MATLAB的drEEM toolbox。
@@ -29,14 +42,14 @@ pip install EEMs-toolkit
 
 ## 功能简介
 
-1. 数据导入
+### 1. 数据导入
 
    - 样本日志导入
    - 样本导入
    - 空白导入
    - 紫外光谱导入
 
-2. 预处理
+### 2. 预处理
 
    - 扣除空白
 
@@ -74,7 +87,7 @@ pip install EEMs-toolkit
 
    - 荧光矩阵平滑（高斯核）
 
-3. PARAFAC分析
+### 3. PARAFAC分析
 
    - 采用非负约束计算不同组分数的模型
 
@@ -92,7 +105,7 @@ pip install EEMs-toolkit
 
      ![image-20230119210756988](/Example/pictures/image-20230119210756988.png)
 
-4. 结果展示
+### 4. 结果展示
 
    - 核一致性和方差解释率
 
@@ -114,7 +127,7 @@ pip install EEMs-toolkit
 
    - 模型结果导出，包括FMax，Em loadings，Ex loadings，组分图数据
 
-5. 其他功能
+### 5. 其他功能
 
    - 预处理后样本数据导出
 
