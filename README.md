@@ -279,7 +279,7 @@ pip install EEMs-toolkit
    [EEMs-toolkit GUI 视频教程](https://zhuanlan.zhihu.com/p/605396414)
 
 ## 引用 Cite
-   Machine Learning-Assisted Source Tracing in Domestic-Industrial Wastewater: A Fluorescence Information-Based Approach
+   Machine Learning-Assisted Source Tracing in Domestic-Industrial Wastewater: A Fluorescence Information-Based Approach  
    DOI: 10.1016/j.watres.2024.122618
    
 ## Star History
