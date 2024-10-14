@@ -8,7 +8,7 @@
     + [4. 结果展示](#4-结果展示)
     + [5. 其他功能](#5-其他功能)
   * [测试示例](#测试示例)
-  * [引用(Cite)](#引用(Cite))
+  * [引用 Cite](#引用-Cite)
   * [Releases 中应用程序教程](#releases-中应用程序教程)
 
 
@@ -278,9 +278,9 @@ pip install EEMs-toolkit
 ## Releases 中应用程序教程
    [EEMs-toolkit GUI 视频教程](https://zhuanlan.zhihu.com/p/605396414)
 
-## 引用(Cite)
-Machine Learning-Assisted Source Tracing in Domestic-Industrial Wastewater: A Fluorescence Information-Based Approach
-DOI: 10.1016/j.watres.2024.122618
+## 引用 Cite
+   Machine Learning-Assisted Source Tracing in Domestic-Industrial Wastewater: A Fluorescence Information-Based Approach
+   DOI: 10.1016/j.watres.2024.122618
    
 ## Star History
 
