@@ -3,6 +3,10 @@
 # @File : EEMs_toolkit.py
 # @Software : PyCharm
 
+import os
+import datetime
+import tlviz
+import pandas as pd
 import numpy as np
 import tensorly as tl
 import matplotlib.pyplot as plt
@@ -11,14 +15,15 @@ from scipy.optimize import curve_fit
 from scipy.signal import find_peaks, savgol_filter
 from tensorly.decomposition import non_negative_parafac_hals
 from joblib import Parallel, delayed
-import os
-import pandas as pd
-import datetime
-import tlviz
+from typing import Optional, Tuple, List, Union, Sequence
+from pathlib import Path
+
+S_275_295 = (275, 295)
+S_350_400 = (350, 400)
 
 
 #  read files
-def read_eems(sample_log, eem_path):
+def read_eems(sample_log: pd.DataFrame, eem_path: str):
     """
     Read the EEM samples with different Ex in columns and different Em in rows.
     The header is Ex and the index is Em.
@@ -30,7 +35,7 @@ def read_eems(sample_log, eem_path):
     file_list = list(sample_log['eem'])
     x = []
     for j, i in enumerate(file_list):
-        c = pd.read_excel(eem_path + r'\\' + i, header=None)
+        c = pd.read_excel(Path(eem_path) / i, header=None)
         x.append(c.values[1:, 1:])
         print(f'EEM {i} has been read. {j + 1} of {len(file_list)}')
     ex = c.values[0, 1:]
@@ -40,7 +45,7 @@ def read_eems(sample_log, eem_path):
     return (x, ex, em), fl
 
 
-def read_abs(sample_log, abs_path):
+def read_abs(sample_log: pd.DataFrame, abs_path: str):
     """
     Read the Abs samples.
 
@@ -51,7 +56,7 @@ def read_abs(sample_log, abs_path):
     file_list = set(sample_log['abs'])
     d = dict()
     for j, i in enumerate(file_list):
-        c = pd.read_excel(abs_path + r'\\' + i, header=None)
+        c = pd.read_excel(Path(abs_path) / i, header=None)
         print(f'Abs {i} has been read. {j + 1} of {len(file_list)}')
         t = c.values
         if t.shape[0] == 2:
@@ -62,7 +67,7 @@ def read_abs(sample_log, abs_path):
     return Abs, Abs_wave
 
 
-def read_blank(sample_log, blank_path):
+def read_blank(sample_log: pd.DataFrame, blank_path: str):
     """
     Read the blank EEM samples with different Ex in columns and different Em in rows.
     The header is Ex and the index is Em.
@@ -74,14 +79,14 @@ def read_blank(sample_log, blank_path):
     file_list = set(sample_log['blank'])
     d = dict()
     for j, i in enumerate(file_list):
-        c = pd.read_excel(blank_path + r'\\' + i, header=None)
+        c = pd.read_excel(Path(blank_path) / i, header=None)
         print(f'Blank {i} has been read. {j + 1} of {len(file_list)}')
         d[i] = c.values[1:, 1:]
     blank_eem = np.array([d[i] for i in sample_log['blank']])
     return blank_eem
 
 
-def read_sample_log(path):
+def read_sample_log(path: str):
     """
     Read the sample log. The example of sample log can be downloaded from GitHub.
 
@@ -93,7 +98,7 @@ def read_sample_log(path):
     return log
 
 
-def slope_fit(Abs, Abs_wave, rsq=0.95, long_range=None):
+def slope_fit(Abs: np.ndarray, Abs_wave: np.ndarray, rsq: float = 0.95, long_range: Tuple = (300, 600)):
     """
     Fit spectral slopes in two different areas of the CDOM absorbance spectrum.
     It will create a new excel file named 'slope_fit_result.xlsx' in the current directory.
@@ -103,28 +108,13 @@ def slope_fit(Abs, Abs_wave, rsq=0.95, long_range=None):
     :param Abs: A matrix with different samples in rows and different wavelengths in columns.
     :param Abs_wave: The wavelengths of Abs.
     :param rsq: The lower limit of adjusted R-squared. If below rsq, return nan. Default is 0.95.
-    :param long_range: Wavelength range for the long wavelength slope. Default is [300, 600].
+    :param long_range: Wavelength range for the long wavelength slope. Default is (300, 600).
     :return: A DataFrame of results.
     """
 
-    def f1(x, *args):
+    def fit_fun(x, *args):
         b1, b2, b3 = args
         return b1 * np.exp(b2 / 1000 * (350 - x)) + b3
-
-    if long_range is None:
-        long_range = [300, 600]
-    index0 = [np.where(long_range[0] == Abs_wave)[0][0], np.where(long_range[1] == Abs_wave)[0][0]]
-    ws0 = Abs_wave[index0[0]:index0[1] + 1]
-    abc0 = Abs[:, index0[0]:index0[1] + 1]
-    r1 = [curve_fit(f1, ws0, abc0[i, :], p0=[abc0[i, :].mean(), 18, 0], maxfev=2500)[0] for i in range(Abs.shape[0])]
-    fit0 = [(f1(ws0, *r1[i]) ** 2).sum() / (abc0[i, :] ** 2).sum() for i in range(Abs.shape[0])]
-    judge0 = [i >= rsq for i in fit0]
-    r = [[275, 295], [350, 400]]
-    index = [[np.where(r[i][0] == Abs_wave)[0][0],
-              np.where(r[i][1] == Abs_wave)[0][0]]
-             for i in [0, 1]]
-    ws = [Abs_wave[i[0]:i[1] + 1] for i in index]
-    abc = [np.log(Abs[:, i[0]:i[1] + 1]) for i in index]
 
     def r_squared(aa, y_true, ww):
         y_p = np.polyval(aa, ww)
@@ -132,40 +122,50 @@ def slope_fit(Abs, Abs_wave, rsq=0.95, long_range=None):
         r2_adjust = 1 - (1 - r2) * (len(ww) - 1) / (len(ww) - len(aa))
         return r2_adjust
 
-    p1 = [np.polyfit(ws[0], abc[0][i, :], 1) for i in range(Abs.shape[0])]
-    fit1 = [r_squared(p1[i], abc[0][i, :], ws[0]) for i in range(Abs.shape[0])]
-    judge1 = [i >= rsq for i in fit1]
-    p2 = [np.polyfit(ws[1], abc[1][i, :], 1) for i in range(Abs.shape[0])]
-    fit2 = [r_squared(p2[i], abc[1][i, :], ws[1]) for i in range(Abs.shape[0])]
-    judge2 = [i >= rsq for i in fit2]
-    exp_slope_microm = []
-    s_275_295 = []
-    s_350_400 = []
-    sr = []
-    for i in range(Abs.shape[0]):
-        if judge0[i]:
-            exp_slope_microm.append(r1[i][1])
-        else:
-            exp_slope_microm.append(np.nan)
-        if judge1[i]:
-            s_275_295.append(p1[i][0] * -1e3)
-        else:
-            s_275_295.append(np.nan)
-        if judge2[i]:
-            s_350_400.append(p2[i][0] * -1e3)
-        else:
-            s_350_400.append(np.nan)
-        if judge1[i] and judge2[i]:
-            sr.append(p1[i][0] / p2[i][0])
-        else:
-            sr.append(np.nan)
-    d = pd.DataFrame()
-    d['exp_slope_microm'] = exp_slope_microm
-    d['s_275_295'] = s_275_295
-    d['s_350_400'] = s_350_400
-    d['SR'] = sr
-    d.to_excel('slope_fit_result.xlsx', index=False)
-    return d
+    results = {'exp_slope_microm': None, 'S_275_295': None, 'S_350_400': None, 'SR': None}
+    if long_range[0] in Abs_wave and long_range[1] in Abs_wave:
+        index = [np.where(long_range[0] == Abs_wave)[0][0],
+                 np.where(long_range[1] == Abs_wave)[0][0]]
+        ws = Abs_wave[index[0]:index[1] + 1]
+        abc = Abs[:, index[0]:index[1] + 1]
+        r0 = [curve_fit(fit_fun, ws, abc[i, :], p0=[abc[i, :].mean(), 18, 0], maxfev=2500)[0]
+              for i in range(Abs.shape[0])]
+        fit0 = [(fit_fun(ws, *r0[i]) ** 2).sum() / (abc[i, :] ** 2).sum()
+                for i in range(Abs.shape[0])]
+        results['exp_slope_microm'] = ([x[1] for x in r0], fit0)
+    if S_275_295[0] in Abs_wave and S_275_295[1] in Abs_wave:
+        index = [np.where(S_275_295[0] == Abs_wave)[0][0],
+                 np.where(S_275_295[1] == Abs_wave)[0][0]]
+        ws = Abs_wave[index[0]:index[1] + 1]
+        abc = np.log(Abs[:, index[0]:index[1] + 1])
+        p1 = [np.polyfit(ws, abc[i, :], 1) for i in range(Abs.shape[0])]
+        fit = [r_squared(p1[i], abc[i, :], ws) for i in range(Abs.shape[0])]
+        results['S_275_295'] = ([x[0] * -1e3 for x in p1], fit)
+    if S_350_400[0] in Abs_wave and S_350_400[1] in Abs_wave:
+        index = [np.where(S_350_400[0] == Abs_wave)[0][0],
+                 np.where(S_350_400[1] == Abs_wave)[0][0]]
+        ws = Abs_wave[index[0]:index[1] + 1]
+        abc = np.log(Abs[:, index[0]:index[1] + 1])
+        p1 = [np.polyfit(ws, abc[i, :], 1) for i in range(Abs.shape[0])]
+        fit = [r_squared(p1[i], abc[i, :], ws) for i in range(Abs.shape[0])]
+        results['S_350_400'] = ([x[0] * -1e3 for x in p1], fit)
+    if results['S_275_295'] is not None and results['S_350_400'] is not None:
+        results['SR'] = np.array(results['S_275_295'][0]) / np.array(results['S_350_400'][0])
+    out = pd.DataFrame()
+    # out['file_list'] = self.file_list
+    if results['exp_slope_microm'] is not None:
+        out['exp_slope_microm'] = results['exp_slope_microm'][0]
+        out['r2_adjust_for_exp_slope_microm'] = results['exp_slope_microm'][1]
+    if results['S_275_295'] is not None:
+        out['S_275_295'] = results['S_275_295'][0]
+        out['r2_adjust_for_S_275_295'] = results['S_275_295'][1]
+    if results['S_350_400'] is not None:
+        out['S_350_400'] = results['S_350_400'][0]
+        out['r2_adjust_for_S_350_400'] = results['S_350_400'][1]
+    if results['SR'] is not None:
+        out['SR'] = results['SR']
+    out.to_excel('slope_fit_result.xlsx', index=False)
+    return out
 
 
 class EEMs_Dataset:
@@ -174,7 +174,7 @@ class EEMs_Dataset:
     """
 
     #  Initialization
-    def __init__(self, x, ex, em, **kwargs):
+    def __init__(self, x: np.ndarray, ex: np.ndarray, em: np.ndarray, **kwargs):
         self.x = x
         self.nSample = x.shape[0]
         self.ex = ex
@@ -200,7 +200,7 @@ class EEMs_Dataset:
         self.iu = 'AU'
 
     #  Preprocess Method
-    def cut_ray_scatter(self, first, second):
+    def cut_ray_scatter(self, first: List, second: List):
         """
         Remove Rayleigh scatter in place, use nans instead.
 
@@ -215,7 +215,7 @@ class EEMs_Dataset:
                     self.x[:, j, i] = np.nan
         print('Cut Rayleigh Scatter done.')
 
-    def cut_ram_scatter(self, first, second, freq=3382):
+    def cut_ram_scatter(self, first: List, second: List, freq: Union[int, float] = 3382):
         """
         Remove Raman scatter in place, use nans instead.
 
@@ -245,7 +245,7 @@ class EEMs_Dataset:
         self.x[self.x < 0] = 0
         print('Interpolation done.')
 
-    def smooth_eem(self, sigma=0.5, filter_size=None):
+    def smooth_eem(self, sigma: float = 0.5, filter_size: Optional[int] = None):
         """
         Use Gaussian kernel to smooth EEMs in place. Suggesting after interpolation.
 
@@ -273,7 +273,8 @@ class EEMs_Dataset:
             self.x[j] = t
         print('EEM smooth done.')
 
-    def sub_dataset(self, sample_orders, ex_orders=None, em_orders=None):
+    def sub_dataset(self, sample_orders: List, ex_orders: Optional[np.ndarray] = None,
+                    em_orders: Optional[np.ndarray] = None):
         """
         Removing samples and/or wavelengths in place.
 
@@ -300,7 +301,7 @@ class EEMs_Dataset:
             self.nem = self.em.shape[0]
             self.x = self.x[:, ~em_orders, :]
 
-    def minus_the_blank(self, blank):
+    def minus_the_blank(self, blank: np.ndarray):
         """
         Minus blank sample in place.
 
@@ -312,7 +313,7 @@ class EEMs_Dataset:
         self.x[self.x < 0] = 0
         print('Blank minus done.')
 
-    def dilute(self, dilution_factors):
+    def dilute(self, dilution_factors: np.ndarray):
         """
         Dilution correction in place.
 
@@ -323,7 +324,7 @@ class EEMs_Dataset:
         self.x = np.einsum('ijk,i->ijk', self.x, dilution_factors)
         print('Dilution correction done.')
 
-    def inner_effect_correct(self, Abs_wave, Abs):
+    def inner_effect_correct(self, Abs_wave: np.ndarray, Abs: np.ndarray):
         """
         Inner filter effect correction in place.
             Reference DOI: 10.1021/es0155276, 10.4319/lom.2013.11.616
@@ -353,7 +354,8 @@ class EEMs_Dataset:
         self.x *= np.power(10, correct)
         print('Inner effect correction done.')
 
-    def raman_areal(self, blank, ex=350, em_range=None, freq=3382):
+    def raman_areal(self, blank: np.ndarray, ex: Union[int, float] = 350, em_range: Optional[List] = None,
+                    freq: Union[int, float] = 3382):
         """
         Turning arbitrary units(AU) into Raman units(RU).
         Reference DOI: 10.1366/000370209788964548
@@ -482,7 +484,7 @@ class EEMs_Dataset:
         return p, phi, s
 
     #  Parallel Factors Analysis
-    def __non_parafac_cal(self, f: int, tol=1e-6, max_iter=2500, start=10):
+    def __non_parafac_cal(self, f: int, tol: float = 1e-6, max_iter: int = 2500, start: int = 10):
         """
         Non-negative CP decomposition via HALS. Uses Hierarchical ALS (Alternating Least Squares)
         which updates each factor column-wise (one column at a time while keeping all other
@@ -522,7 +524,8 @@ class EEMs_Dataset:
         # tlviz.visualisation.core_element_plot(r, self.x)
         # plt.show()
 
-    def multi_non_parafac_cal(self, f=None, tol=1e-6, max_iter=2500, start=10):
+    def multi_non_parafac_cal(self, f: Optional[Union[int, List, Tuple]] = None, tol: float = 1e-6, max_iter: int = 2500,
+                              start: int = 10):
         """
         Run 'start' times Non-negative CP decomposition via HALS. Uses Hierarchical ALS (Alternating Least Squares)
         which updates each factor column-wise (one column at a time while keeping all other
@@ -553,7 +556,7 @@ class EEMs_Dataset:
         qx = self.__finger_model(f)
         self.model[f] = np.einsum('ij,jkl->ikl', self.factors[f][0], qx)
 
-    def split_analysis(self, f, random_state=None, start=10):
+    def split_analysis(self, f: Union[int, List, Tuple], random_state: Optional[int] = None, start: int = 10):
         """
         Generate PARAFAC models nested in dataset splits. TCC above 0.95 can be validated.
             Reference DOI: 10.1027/1614-2241.2.2.57
@@ -654,7 +657,7 @@ class EEMs_Dataset:
         self.factors[f][2] /= np.linalg.norm(self.factors[f][2], axis=0)
 
     #  Plot Functions
-    def plot_eem_by1(self, f=None, sample_id=None):
+    def plot_eem_by1(self, f: Optional[int] = None, sample_id: Optional[Sequence[int]] = None):
         """
         Plot EEMs
 
@@ -689,7 +692,7 @@ class EEMs_Dataset:
                 plt.subplots_adjust(left=0.13, bottom=0.11, right=0.95, top=0.9)
                 plt.show()
 
-    def plot_3deem_by1(self, f=None, sample_id=None):
+    def plot_3deem_by1(self, f: Optional[int] = None, sample_id: Optional[Sequence[int]] = None):
         """
         Plot 3d-EEMs
 
@@ -777,7 +780,7 @@ class EEMs_Dataset:
         plt.subplots_adjust(left=0.13, bottom=0.11, right=0.95, top=0.9)
         plt.show()
 
-    def plot_residual_error(self, f: int, sample_id=None):
+    def plot_residual_error(self, f: int, sample_id: Optional[Sequence[int]] = None):
         """
         Plot sample, model from factors and residual in one figure.
 
@@ -925,7 +928,7 @@ class EEMs_Dataset:
         plt.subplots_adjust(left=0.08, bottom=0.09, right=0.85, top=0.92, wspace=0.23, hspace=0.32)
         plt.show()
 
-    def plot_fmax(self, f: int, use_file_list=False):
+    def plot_fmax(self, f: int, use_file_list: Optional[bool] = False):
         """
         Plot FMax to see components' variation among samples.
         :param f: int, number of components
@@ -1020,7 +1023,7 @@ class EEMs_Dataset:
         plt.show()
 
     #  Data output
-    def open_fluor(self, f: int, output_path=None, **kwargs):
+    def open_fluor(self, f: int, output_path: Optional[str] = None, **kwargs):
         """
         Output a text file which can be uploaded to the OpenFluor to compare.
 
@@ -1032,7 +1035,7 @@ class EEMs_Dataset:
         if output_path is None:
             file_name = f'{f}-component model.txt'
         else:
-            file_name = output_path + r'\\' + f'{f}-component model.txt'
+            file_name = output_path + '\\' + f'{f}-component model.txt'
         ex_str = ''
         for i in range(self.nex):
             ex_str += f'EX\t{self.ex[i]}\t'
@@ -1067,7 +1070,7 @@ class EEMs_Dataset:
                     f'#\n# Excitation/Emission (Ex, Em), wavelength (nm), component[n] (intensity)\n#\n'
                     f'{ex_str}{em_str}')
 
-    def eems_output(self, output_path=None):
+    def eems_output(self, output_path: Optional[str] = None):
         """
         Output the EEMs
 
@@ -1081,14 +1084,14 @@ class EEMs_Dataset:
             out[1:, 0] = self.em
             out = pd.DataFrame(out)
             if output_path is None:
-                file_name = self.file_list[i] + '.xlsx'
+                file_name = f"{self.file_list[i]}'.xlsx'"
             else:
-                file_name = output_path + r'\\' + self.file_list[i] + '.xlsx'
+                file_name = Path(output_path) / f"{self.file_list[i]}'.xlsx'"
             out.to_excel(file_name, header=False, index=False)
             print(f'EEM {self.file_list[i]} is saved. {i + 1} of {self.nSample}')
         print('All done.')
 
-    def parafac_result_output(self, f: int, output_path=None):
+    def parafac_result_output(self, f: int, output_path: Optional[str] = None):
         """
         Output PARAFAC results, including FMax, Em loadings, Ex loadings and components.
 
@@ -1116,7 +1119,7 @@ class EEMs_Dataset:
         if output_path is None:
             file_name = f'{datetime.date.today()} {f}-component result.xlsx'
         else:
-            file_name = output_path + r'\\' + f'{datetime.date.today()} {f}-component result.xlsx'
+            file_name = Path(output_path) / f'{datetime.date.today()} {f}-component result.xlsx'
         with pd.ExcelWriter(file_name) as writer:
             fmax.to_excel(writer, sheet_name='FMax', index=False)
             em_loadings.to_excel(writer, sheet_name='Em loadings', index=False)
@@ -1124,7 +1127,7 @@ class EEMs_Dataset:
             for j in range(len(out_model)):
                 out_model[j].to_excel(writer, sheet_name=f'C{j + 1}', header=False, index=False)
 
-    def fri_result_output(self, output_path=None):
+    def fri_result_output(self, output_path: Optional[str] = None):
         """
         Calculate FRI and output
 
@@ -1141,13 +1144,13 @@ class EEMs_Dataset:
         if output_path is None:
             file_name = 'FRI.xlsx'
         else:
-            file_name = output_path + r'\\FRI.xlsx'
+            file_name = Path(output_path) / 'FRI.xlsx'
         with pd.ExcelWriter(file_name) as writer:
             pfr.to_excel(writer, sheet_name='percent fluorescence response', index=False)
             volume.to_excel(writer, sheet_name='volume', index=False)
             mf.to_excel(writer, sheet_name='multiplication factor', index=False)
 
-    def fluorescence_indices_output(self, output_path=None):
+    def fluorescence_indices_output(self, output_path: Optional[str] = None):
         """
         Calculate fluorescence indices and output
 
@@ -1163,7 +1166,7 @@ class EEMs_Dataset:
         if output_path is None:
             file_name = 'fluorescence_indices.xlsx'
         else:
-            file_name = output_path + r'\\fluorescence_indices.xlsx'
+            file_name = Path(output_path) / 'fluorescence_indices.xlsx'
         if hix:
             df['HIX'] = hix
         df.to_excel(file_name, index=False)
