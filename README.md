@@ -168,12 +168,12 @@ pip install EEMs-toolkit
    x, ex, em = c
    Data = EEMs_Dataset(x, ex, em, file_list=fl)
    Data.plot_eem_by1()
+   Data.inner_effect_correct(Abs_wave, Abs)
    Data.minus_the_blank(blank)
    # Data.plot_eem_by1()
    Data.raman_areal(blank)
    Data.sub_dataset([], Data.ex < 250, Data.em > 600)
    # Data.plot_eem_by1()
-   Data.inner_effect_correct(Abs_wave, Abs)
    # Data.plot_eem_by1()
    Data.cut_ray_scatter([15, 15], [20, 15])
    Data.cut_ram_scatter([15, 15], [10, 10])
