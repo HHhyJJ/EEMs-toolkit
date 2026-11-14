@@ -17,7 +17,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks, savgol_filter
 from tensorly.decomposition import non_negative_parafac_hals
 from tensorly.cp_tensor import CPTensor
-from typing import Optional, Tuple, List, Union, Sequence, Iterable, overload
+from typing import Optional, Sequence, Iterable, overload
 from multiprocessing.pool import Pool
 from pathlib import Path
 
@@ -58,17 +58,16 @@ CROSS = (
 
 #  read files
 
-
-def read_eems(sample_log: pd.DataFrame, eem_path: str) -> EEMsDataset:
+def read_eems(file_list: Iterable[str], eem_path: str) -> EEMsDataset:
     """
     Read the EEM samples with different Ex in columns and different Em in rows.
     The header is Ex and the index is Em.
 
-    :param sample_log: A DataFrame with the column 'eem' in it.
+    :param file_list: A list of eem filenames.
     :param eem_path: The directory where the EEM files saved.
     :return: EEMsDataset.
     """
-    file_list: list[str] = list(sample_log['eem'])
+    file_list = list(file_list)
     nums = len(file_list)
     root = Path(eem_path)
     x = []
@@ -77,7 +76,7 @@ def read_eems(sample_log: pd.DataFrame, eem_path: str) -> EEMsDataset:
             file_path: Path = root / i
             if not file_path.exists():
                 raise FileNotFoundError(str(file_path))
-            c = pd.read_excel(file_list, header=None)
+            c = pd.read_excel(file_path, header=None)
             x.append(c.values[1:, 1:])
             print(f'EEM {i} has been read. {j + 1} of {nums}')
         ex = c.values[0, 1:]
@@ -93,20 +92,21 @@ def read_eems(sample_log: pd.DataFrame, eem_path: str) -> EEMsDataset:
         raise e
 
 
-def read_abs(sample_log: pd.DataFrame, abs_path: str) -> Abs:
+def read_abs(file_list: Iterable[str], abs_path: str) -> Abs:
     """
     Read the Abs samples.
 
-    :param sample_log:  A DataFrame with the column 'abs' in it.
+    :param file_list:  A list of abs filenames.
     :param abs_path: The directory where the Abs files saved.
-    :return: A matrix of absorbance, and the wavelength of the absorbance.
+    :return: Absorbance dataset.
     """
-    file_list: set[str] = set(sample_log['abs'])
-    nums = len(file_list)
+    file_list = list(file_list)
+    file_list_: set[str] = set(file_list)
+    nums = len(file_list_)
     root = Path(abs_path)
     d = dict()
     try:
-        for j, i in enumerate(file_list):
+        for j, i in enumerate(file_list_):
             file_path = root / i
             if not file_path.exists():
                 raise FileNotFoundError(str(file_path))
@@ -117,49 +117,38 @@ def read_abs(sample_log: pd.DataFrame, abs_path: str) -> Abs:
                 t = t.T
             d[i] = t[:, 1]
         wave = t[:, 0]
-        data = np.array([d[i] for i in sample_log['abs']])
-        return Abs(wave, data, sample_log['abs'])
+        data = np.array([d[i] for i in file_list])
+        return Abs(wave, data, file_list)
     except Exception as e:
         raise e
 
 
-def read_blank(sample_log: pd.DataFrame, blank_path: str) -> np.ndarray[tuple[int, int, int], np.dtype[np.float64]]:
+def read_blank(file_list: Iterable[str], blank_path: str) -> np.ndarray[tuple[int, int, int], np.dtype[np.float64]]:
     """
     Read the blank EEM samples with different Ex in columns and different Em in rows.
     The header is Ex and the index is Em.
 
-    :param sample_log: A DataFrame with the column 'blank' in it.
+    :param file_list: A list of blank filenames.
     :param blank_path: The directory where the blank EEMs files saved.
     :return: blank_eem
     """
-    file_list: set[str] = set(sample_log['blank'])
-    nums = len(file_list)
+    file_list = list(file_list)
+    file_list_: set[str] = set(file_list)
+    nums = len(file_list_)
     root = Path(blank_path)
     d = dict()
     try:
-        for j, i in enumerate(file_list):
+        for j, i in enumerate(file_list_):
             file_path = root / i
             if not file_path.exists():
                 raise FileNotFoundError(str(file_path))
             c = pd.read_excel(file_path, header=None)
             print(f'Blank {i} has been read. {j + 1} of {nums}')
             d[i] = c.values[1:, 1:]
-        blank_eem = np.array([d[i] for i in sample_log['blank']])
+        blank_eem = np.array([d[i] for i in file_list])
         return blank_eem
     except Exception as e:
         raise e
-
-
-def read_sample_log(path: str) -> pd.DataFrame:
-    """
-    Read the sample log. The example of sample log can be downloaded from GitHub.
-
-    :param path: The directory where the sample log saved.
-    :return: A DataFrame of sample log.
-    """
-    log = pd.read_excel(path, header=0, index_col=None)
-    print('Sample log has been read.')
-    return log
 
 
 class EEMsDataset:
@@ -174,7 +163,7 @@ class EEMsDataset:
             ex: np.ndarray[tuple[int], np.dtype[np.float64]],
             em: np.ndarray[tuple[int], np.dtype[np.float64]],
             file_list: Optional[np.ndarray[tuple[int],
-                                           np.dtype[np.str_]]] | Sequence[str] = None,
+            np.dtype[np.str_]]] | Sequence[str] = None,
     ):
         self.x = np.asarray(x)
         self.nSample = x.shape[0]
@@ -199,6 +188,8 @@ class EEMsDataset:
         self.leverage = dict()
         self.split_result = dict()
         self.iu = 'AU'
+        self.blanked = False
+        self.ife = False
 
     #  Preprocess Method
     def cut_ray_scatter(self, first: tuple[float, float], second: tuple[float, float]):
@@ -288,9 +279,9 @@ class EEMsDataset:
             self,
             sample_orders: Optional[list[int]] = None,
             ex_orders: Optional[np.ndarray[tuple[int],
-                                           np.dtype[np.bool_]]] = None,
+            np.dtype[np.bool_]]] = None,
             em_orders: Optional[np.ndarray[tuple[int],
-                                           np.dtype[np.bool_]]] = None,
+            np.dtype[np.bool_]]] = None,
     ):
         """
         Removing samples and/or wavelengths in place.
@@ -326,13 +317,17 @@ class EEMsDataset:
 
         :param blank: The same shape as self.x or just one sample.
         """
+        if self.blanked:
+            print("Blank has been applied.")
+            return
         if blank.ndim == 2:
             blank = np.array([blank for _ in range(self.nSample)])
         self.x -= blank
         self.x[self.x < 0] = 0
+        self.blanked = True
         print('Blank minus done.')
 
-    def dilute(self, dilution_factors: np.ndarray[tuple[int], np.dtype[np.float64]]):
+    def dilute(self, dilution_factors: Iterable[float]):
         """
         Dilution correction in place.
 
@@ -340,6 +335,7 @@ class EEMsDataset:
         """
         # for i in range(self.nSample):
         #     self.x[i] *= dilution_factors[i]
+        dilution_factors = np.array(dilution_factors, dtype=np.float64)
         self.x = np.einsum('ijk,i->ijk', self.x, dilution_factors)
         print('Dilution correction done.')
 
@@ -350,6 +346,9 @@ class EEMsDataset:
 
         :param absorbance: An Abs object.
         """
+        if self.ife:
+            print("Inner filter effect correction has been applied.")
+            return
         for ex in self.ex:
             if not absorbance.check_wavelength(ex):
                 print(f'Ex wavelength {ex} is not included')
@@ -363,6 +362,7 @@ class EEMsDataset:
             ex_abs = absorbance(iSample, self.ex)
             correct = 0.5 * (em_abs[:, None] + ex_abs[None, :])  # nem x nex
             self.x[iSample] *= np.power(10, correct)
+        self.ife = True
         print('Inner effect correction done.')
 
     def raman_areal(self, blank: np.ndarray[tuple[int, int] | tuple[int, int, int], np.dtype[np.float64]],
@@ -483,10 +483,8 @@ class EEMsDataset:
                     scan310[em_index[FREI[0][0]]] / scan310[em_index[FREI[0][1][0]]:em_index[FREI[0][1][1]] + 1].max())
             if checked['HIX']:
                 scan254 = savgol_filter(fitted[:, ex_index[HIX[1]] + 1], 21, 2)
-                v1 = scan254[em_index[HIX[0][0][0]]
-                    :em_index[HIX[0][0][1]] + 1].sum()
-                v2 = scan254[em_index[HIX[0][1][0]]
-                    :em_index[HIX[0][1][1]] + 1].sum()
+                v1 = scan254[em_index[HIX[0][0][0]]:em_index[HIX[0][0][1]] + 1].sum()
+                v2 = scan254[em_index[HIX[0][1][0]]:em_index[HIX[0][1][1]] + 1].sum()
                 if hix_type == 0:
                     hix.append(v1 / (v1 + v2))
                 else:
@@ -552,13 +550,13 @@ class EEMsDataset:
         if em.min() < 250:
             if ex.min() < em.min():
                 s[0] = (250 - ex.min()) * (330 - em.min()) - \
-                    0.5 * (250 - em.min()) ** 2
+                       0.5 * (250 - em.min()) ** 2
             else:
                 s[0] = 0.5 * (330 - 250 + 330 - ex.min()) * (250 - ex.min())
             if ex.max() >= 380:
                 s[3] = 0.5 * (380 - 250) ** 2
                 s[4] = (ex.max() - 250) * (em.max() - 380) - \
-                    0.5 * (ex.max() - 380) ** 2
+                       0.5 * (ex.max() - 380) ** 2
             else:
                 s[3] = 0.5 * (ex.max() - 250) * (380 - ex.max() + 380 - 250)
                 s[4] = (ex.max() - 250) * (em.max() - 380)
@@ -567,10 +565,10 @@ class EEMsDataset:
             if ex.max() >= 380:
                 s[3] = 0.5 * (em.min() - 250 + 380 - 250) * (380 - em.min())
                 s[4] = (ex.max() - 250) * (em.max() - 380) - \
-                    0.5 * (ex.max() - 380) ** 2
+                       0.5 * (ex.max() - 380) ** 2
             else:
                 s[3] = (em.min() - 250) * (380 - em.min()) + \
-                    0.5 * (ex.max() - em.min()) * \
+                       0.5 * (ex.max() - em.min()) * \
                        (380 - ex.max() + 380 - em.min())
                 s[4] = (ex.max() - 250) * (em.max() - 380)
         index = [[[np.where(ex == 250)[0][0], np.argmin(ex)],
@@ -589,7 +587,7 @@ class EEMsDataset:
             t = new_x[i]
             for j in range(5):
                 ts = t[index[j][1][1]:index[j][1][0] +
-                       1, index[j][0][1]:index[j][0][0] + 1]
+                                      1, index[j][0][1]:index[j][0][0] + 1]
                 phi[i, j] = trapezoid(trapezoid(ts, ex[index[j][0][1]:index[j][0][0] + 1], axis=1),
                                       em[index[j][1][1]:index[j][1][0] + 1])
                 p[i, j] = phi[i, j] * s[j]
@@ -599,17 +597,20 @@ class EEMsDataset:
 
     @overload
     @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: None = None) -> tuple[CPTensor | tuple, int]:
+    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *,
+                          j: None = None) -> tuple[CPTensor | tuple, int]:
         ...
 
     @overload
     @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: int) -> tuple[CPTensor | tuple, int, int]:
+    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: int) -> tuple[
+        CPTensor | tuple, int, int]:
         ...
 
     #  Parallel Factors Analysis
     @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: Optional[int] = None) -> tuple[CPTensor | tuple, int, int] | tuple[CPTensor | tuple, int]:
+    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *,
+                          j: Optional[int] = None) -> tuple[CPTensor | tuple, int, int] | tuple[CPTensor | tuple, int]:
         r = non_negative_parafac_hals(
             tensor=tl.tensor(x),
             rank=f,
@@ -617,17 +618,17 @@ class EEMsDataset:
             init=init, tol=tol,
             return_errors=False,
         )
-        print(f"A {f}-component model has been fitted.")
+        # print(f"A {f}-component model has been fitted.")
         if j is not None:
             return r, f, j
         else:
             return r, f
 
     def multi_non_parafac_cal(
-        self, f: Optional[int | Iterable[int]] = None,
-        tol: float = 1e-6,
-        max_iter: int = 2500,
-        starts: int = 10,
+            self, f: Optional[int | Iterable[int]] = None,
+            tol: float = 1e-6,
+            max_iter: int = 2500,
+            starts: int = 10,
     ):
         """
         Run 'start' times Non-negative CP decomposition via HALS. Uses Hierarchical ALS (Alternating Least Squares)
@@ -661,7 +662,9 @@ class EEMsDataset:
         results: dict[int, list[CPTensor | tuple]] = {i: [] for i in fs}
 
         def callback(rtn: tuple[CPTensor | tuple, int]):
+            print(f"A {rtn[1]}-component model has been fitted.")
             results[rtn[1]].append(rtn[0])
+
         pool = Pool(n)
         for fi in fs:
             for _ in range(starts):
@@ -701,11 +704,11 @@ class EEMsDataset:
         self.factors = post_results
 
     def split_analysis(
-        self, f: Optional[int | Iterable[int]] = None,
-        tol: float = 1e-6,
-        max_iter: int = 2500,
-        starts: int = 10,
-        random_state: Optional[int] = None,
+            self, f: Optional[int | Iterable[int]] = None,
+            tol: float = 1e-6,
+            max_iter: int = 2500,
+            starts: int = 10,
+            random_state: Optional[int] = None,
     ):
         """
         Generate PARAFAC models nested in dataset splits. TCC above 0.95 can be validated.
@@ -744,10 +747,13 @@ class EEMsDataset:
         results = {i: [[] for _ in range(cn)] for i in fs}
 
         def callback1(rtn: tuple[CPTensor | tuple, int, int]):
-            results[rtn[1]][rtn[2]*2].append(rtn[0])
+            print(f"A {rtn[1]}-component model has been fitted.")
+            results[rtn[1]][rtn[2] * 2].append(rtn[0])
 
         def callback2(rtn: tuple[CPTensor | tuple, int, int]):
-            results[rtn[1]][rtn[2]*2+1].append(rtn[0])
+            print(f"A {rtn[1]}-component model has been fitted.")
+            results[rtn[1]][rtn[2] * 2 + 1].append(rtn[0])
+
         pool = Pool(n)
         for j, (n1, n2) in enumerate(CROSS):
             c_x1 = np.concatenate((splits[n1[0]], splits[n1[1]]), axis=0)
@@ -815,14 +821,14 @@ class EEMsDataset:
             for i in range(len(CROSS)):
                 ex_l.append(
                     tlviz.factor_tools.cosine_similarity(
-                        self.split_result[fi][2*i][1][2],
-                        self.split_result[fi][2*i+1][1][2]
+                        self.split_result[fi][2 * i][1][2],
+                        self.split_result[fi][2 * i + 1][1][2]
                     )
                 )
                 em_l.append(
                     tlviz.factor_tools.cosine_similarity(
-                        self.split_result[fi][2*i][1][1],
-                        self.split_result[fi][2*i+1][1][1]
+                        self.split_result[fi][2 * i][1][1],
+                        self.split_result[fi][2 * i + 1][1][1]
                     )
                 )
             m1 = min(ex_l)
@@ -836,7 +842,8 @@ class EEMsDataset:
 
     #  Plot Functions
 
-    def plot_eem_by1(self, f: Optional[int] = None, sample_id: Optional[np.typing.ArrayLike] = None, plot_3d: bool = False):
+    def plot_eem_by1(self, f: Optional[int] = None, sample_id: Optional[np.typing.ArrayLike] = None,
+                     plot_3d: bool = False):
         """
         Plot EEMs
 
@@ -864,7 +871,8 @@ class EEMsDataset:
                 ax.plot_surface(x, y, model[i])
             else:
                 ax = fig.add_subplot()
-                ax.contourf(x, y, model[i])
+                cs = ax.contourf(x, y, model[i])
+                fig.colorbar(cs, ax=ax)
             ax.set_xlabel('Excitation/nm', fontsize=11)
             ax.set_ylabel('Emission/nm', fontsize=11)
             if f is None:
@@ -1004,22 +1012,22 @@ class EEMsDataset:
         ts = 'ABCD'
         for ind in range(len(CROSS)):
             title = ''.join([ts[xc] for xc in CROSS[ind][0]]) + ' vs ' + \
-                ''.join([ts[xc] for xc in CROSS[ind][1]])
-            axes[0, ind].seet_title(f'Model {f}\n{title} - Em')
-            axes[1, ind].seet_title(f'Model {f}\n{title} - Ex')
+                    ''.join([ts[xc] for xc in CROSS[ind][1]])
+            axes[0, ind].set_title(f'Model {f}\n{title} - Em')
+            axes[1, ind].set_title(f'Model {f}\n{title} - Ex')
             for jix in range(f):
-                line, = axes[0, ind].plot(self.em, self.split_result[f][2*ind][1][1][:, jix],
-                                          ls='--', label=f'1st comp {jix+1}')
-                axes[0, ind].plot(self.em, self.split_result[f][2*ind+1][1][1][:, jix],
-                                  ls='--', label=f'2nd comp {jix+1}', c=line.get_color())
+                line, = axes[0, ind].plot(self.em, self.split_result[f][2 * ind][1][1][:, jix],
+                                          ls='-', label=f'1st comp {jix + 1}')
+                axes[0, ind].plot(self.em, self.split_result[f][2 * ind + 1][1][1][:, jix],
+                                  ls='--', label=f'2nd comp {jix + 1}', c=line.get_color())
                 axes[0, ind].plot(self.em, self.factors[f][1][1][:, jix],
-                                  ls=':', label=f'Overall comp {jix+1}', c=line.get_color())
-                line, = axes[1, ind].plot(self.em, self.split_result[f][2*ind][1][2][:, jix],
-                                          ls='--', label=f'1st comp {jix+1}')
-                axes[1, ind].plot(self.em, self.split_result[f][2*ind+1][1][2][:, jix],
-                                  ls='--', label=f'2nd comp {jix+1}', c=line.get_color())
-                axes[1, ind].plot(self.em, self.factors[f][1][2][:, jix],
-                                  ls=':', label=f'Overall comp {jix+1}', c=line.get_color())
+                                  ls=':', label=f'Overall comp {jix + 1}', c=line.get_color())
+                line, = axes[1, ind].plot(self.ex, self.split_result[f][2 * ind][1][2][:, jix],
+                                          ls='-', label=f'1st comp {jix + 1}')
+                axes[1, ind].plot(self.ex, self.split_result[f][2 * ind + 1][1][2][:, jix],
+                                  ls='--', label=f'2nd comp {jix + 1}', c=line.get_color())
+                axes[1, ind].plot(self.ex, self.factors[f][1][2][:, jix],
+                                  ls=':', label=f'Overall comp {jix + 1}', c=line.get_color())
         lines, labels = axes[0, 0].get_legend_handles_labels()
         fig.legend(lines, labels, framealpha=0.6, loc='center right',
                    fontsize=11, frameon=True, shadow=False, bbox_to_anchor=(1.0, 0.5))
@@ -1034,8 +1042,8 @@ class EEMsDataset:
         """
         _ = plt.figure(figsize=(6, 4.8))
         # fig.canvas.manager.set_window_title(f'FMax plot of {f}-component')
-        fmax = self.factors[f][0] * \
-            self.factors[f][1].max(axis=0) * self.factors[f][2].max(axis=0)
+        fmax = self.factors[f][1][0] * \
+               self.factors[f][1][1].max(axis=0) * self.factors[f][1][2].max(axis=0)
         for i in range(f):
             plt.plot(fmax[:, i], label=f'Component {i + 1}')
         plt.xlabel('Sample', fontsize=11)
@@ -1053,13 +1061,12 @@ class EEMsDataset:
 
         :param f: int, number of components
         """
-        model = tl.cp_to_tensor(self.factors[f])
         print(f'Description of PARAFAC components - Model {f}')
         peak = [[], []]
         for i in [1, 2]:
             w = self.em if i == 1 else self.ex
             for j in range(f):
-                index = find_peaks(self.factors[f][i][:, j])
+                index = find_peaks(self.factors[f][1][i][:, j])
                 peak[i - 1].append(w[index[0]])
         for j in range(f):
             print(f'Component {j + 1}')
@@ -1080,7 +1087,11 @@ class EEMsDataset:
         # fig.canvas.manager.set_window_title('Plot components')
         for ii in range(1, f + 1):
             plt.subplot(r, c, ii)
-            plt.contourf(self.ex, self.em, model[ii - 1])
+            x_ = np.outer(
+                self.factors[f][1][1][:, ii - 1],
+                self.factors[f][1][2][:, ii - 1]
+            )
+            plt.contourf(self.ex, self.em, x_)
             plt.title(f'Component {ii}', fontsize=13)
             if ii % c == 1:
                 plt.ylabel('Emission/nm', fontsize=11)
@@ -1104,8 +1115,8 @@ class EEMsDataset:
         # fig.canvas.manager.set_window_title('Plot loadings for all components')
         for ii in range(1, f + 1):
             plt.subplot(r, c, ii)
-            plt.plot(self.ex, self.factors[f][2][:, ii - 1], label='Ex')
-            plt.plot(self.em, self.factors[f][1][:, ii - 1], label='Em')
+            plt.plot(self.ex, self.factors[f][1][2][:, ii - 1], label='Ex')
+            plt.plot(self.em, self.factors[f][1][1][:, ii - 1], label='Em')
             plt.legend(framealpha=0.6, loc='upper right',
                        fontsize=11, frameon=True, shadow=False)
             plt.xlim(min(self.ex.min(), self.em.min()),
@@ -1136,12 +1147,12 @@ class EEMsDataset:
         ex_str = ''
         for i in range(self.nex):
             ex_str += f'EX\t{self.ex[i]}\t'
-            s = '\t'.join(f'{self.factors[f][2][i, j]}' for j in range(f))
+            s = '\t'.join(f'{self.factors[f][1][2][i, j]}' for j in range(f))
             ex_str = ex_str + s + '\n'
         em_str = ''
         for i in range(self.nem):
             em_str += f'EM\t{self.em[i]}\t'
-            s = '\t'.join(f'{self.factors[f][1][i, j]}' for j in range(f))
+            s = '\t'.join(f'{self.factors[f][1][1][i, j]}' for j in range(f))
             em_str = em_str + s + '\n'
         em_str = em_str[:-1]
         name = kwargs.get('name', '')
@@ -1161,7 +1172,7 @@ class EEMsDataset:
                      f'reference\t{reference}\nunit\t{self.iu}\ntoolbox\tEEM toolkit for Python\n'
                      f'date\t{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n'
                      f'fluorometer\t{fluorometer}\nnSample\t{self.nSample}\nconstraints\tnon-negativity\n'
-                     f'validation\tSplit-half analysis (S4C4T2)\nmethods\t{method}\n'
+                     f'validation\tSplit-half analysis (S4C6T3)\nmethods\t{method}\n'
                      f'preprocess\t{preprocess}\nsources\t{sources}\necozones\t{ecozones}\n'
                      f'description\t{description}\n'
                      f'#\n# Excitation/Emission (Ex, Em), wavelength (nm), component[n] (intensity)\n#\n'
@@ -1182,9 +1193,9 @@ class EEMsDataset:
             out[1:, 0] = self.em
             out = pd.DataFrame(out)
             if output_path is None:
-                file_name = Path(f"{self.file_list[i]}.xlsx'")
+                file_name = Path(os.getcwd()) / f"{self.file_list[i]}.xlsx"
             else:
-                file_name = Path(output_path) / f"{self.file_list[i]}.xlsx'"
+                file_name = Path(output_path) / f"{self.file_list[i]}.xlsx"
             out.to_excel(file_name, header=False, index=False)
             print(
                 f'EEM {self.file_list[i]} is saved at {str(file_name)}. {i + 1} of {self.nSample}')
@@ -1198,25 +1209,29 @@ class EEMsDataset:
         :param output_path: Optional, the directory to save the text. If not given,
             save in the current directory.
         """
-        fmax = pd.DataFrame(self.factors[f][0] * self.factors[f][1].max(axis=0) * self.factors[f][2].max(axis=0),
-                            columns=[f'FMax{i + 1}' for i in range(f)])
+        fmax = pd.DataFrame(
+            self.factors[f][1][0] * self.factors[f][1][1].max(axis=0) * self.factors[f][1][2].max(axis=0),
+            columns=[f'FMax{i + 1}' for i in range(f)])
         fmax.insert(loc=0, column='EEM', value=self.file_list)
-        em_loadings = pd.DataFrame(self.factors[f][1],
+        em_loadings = pd.DataFrame(self.factors[f][1][1],
                                    columns=[f'Em{i + 1}' for i in range(f)])
         em_loadings.insert(loc=0, column='Em', value=self.em)
-        ex_loadings = pd.DataFrame(self.factors[f][2],
+        ex_loadings = pd.DataFrame(self.factors[f][1][2],
                                    columns=[f'Ex{i + 1}' for i in range(f)])
         ex_loadings.insert(loc=0, column='Ex', value=self.ex)
         out_model = []
-        for i in range(3):
+        for i in range(f):
             out = np.full((self.nem + 1, self.nex + 1), np.nan)
-            j = np.outer(self.factors[f][1][1], self.factors[f][1][2])
+            j = np.outer(
+                self.factors[f][1][1][:, i],
+                self.factors[f][1][2][:, i]
+            )
             out[1:, 1:] = j
             out[0, 1:] = self.ex
             out[1:, 0] = self.em
             out_model.append(pd.DataFrame(out))
         if output_path is None:
-            file_name = Path(filename)
+            file_name = Path(os.getcwd()) / filename
         else:
             file_name = Path(output_path) / filename
         with pd.ExcelWriter(file_name) as writer:
@@ -1243,7 +1258,7 @@ class EEMsDataset:
         volume.insert(loc=0, column='Sample', value=self.file_list)
         mf = pd.DataFrame(mf, columns=cols)
         if output_path is None:
-            file_name = filename
+            file_name = Path(os.getcwd()) / filename
         else:
             file_name = Path(output_path) / filename
         with pd.ExcelWriter(file_name) as writer:
@@ -1264,7 +1279,7 @@ class EEMsDataset:
         """
         df = self._pick_fluorescence_indices()
         if output_path is None:
-            file_name = output_name
+            file_name = Path(os.getcwd()) / output_name
         else:
             file_name = Path(output_path) / output_name
         df.to_excel(file_name, index=False)
@@ -1277,7 +1292,7 @@ class Abs:
     """
 
     def __init__(self, wavelength: np.ndarray, absorbance: np.ndarray,
-                 file_list: Sequence[str] | np.ndarray | pd.Series):
+                 file_list: Sequence[str]):
         """
         :param wavelength: The wavelengths of Abs.
         :param absorbance: A matrix with different samples in rows and different wavelengths in columns.
@@ -1298,7 +1313,7 @@ class Abs:
                        for i in range(self.absorbance.shape[0])]
         self.file_list = np.array(file_list)
 
-    def slope_fit(self, long_range: Tuple[int, int] = LONG_RANGE) -> pd.DataFrame:
+    def slope_fit(self, long_range: tuple[int, int] = LONG_RANGE) -> pd.DataFrame:
         """
         Fit spectral slopes in two different areas of the CDOM absorbance spectrum.
         It will create a new excel file named 'slope_fit_result.xlsx' in the current directory.
@@ -1316,7 +1331,7 @@ class Abs:
         def r_squared(aa, y_true, ww):
             y_p = np.polyval(aa, ww)
             r2 = 1 - ((y_p - y_true) ** 2).sum() / \
-                ((y_true - y_true.mean()) ** 2).sum()
+                 ((y_true - y_true.mean()) ** 2).sum()
             r2_adjust = 1 - (1 - r2) * (len(ww) - 1) / (len(ww) - len(aa))
             return r2_adjust
 
@@ -1369,7 +1384,7 @@ class Abs:
             out['SR'] = results['SR']
         return out
 
-    def check_wavelength(self, wave: Union[int, float]) -> bool:
+    def check_wavelength(self, wave: float) -> bool:
         if self.wavelength[0] <= wave <= self.wavelength[-1]:
             return True
         else:

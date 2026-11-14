@@ -1,10 +1,29 @@
-# 所有文本文件在仓库中统一存为 LF
+# 默认：自动检测文本文件，并在仓库中将换行符统一规范化为 LF
 * text=auto eol=lf
 
 # Notebook 明确按文本处理
 *.ipynb text eol=lf
 
-# 二进制文件不做转换
+# Python 源码：强制使用 LF，并启用 Python 语言感知的 diff
+*.py text eol=lf diff=python
+
+# Markdown 文档：强制使用 LF
+*.md text eol=lf diff=markdown
+
+# 二进制文件：禁止 Git 进行任何换行符转换
 *.png binary
 *.jpg binary
-*.xlsx binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.whl binary
+*.pyc binary
+*.so binary
+
+# Windows 专属脚本：保持 CRLF，否则 cmd.exe 可能无法运行
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

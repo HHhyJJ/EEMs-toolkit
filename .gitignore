@@ -1,0 +1,9 @@
+/.venv
+/.idea
+/__pycache__
+/dist
+/build
+/EEMs_toolkit.egg-info
+setup.py
+steps.txt
+token.pypirc
