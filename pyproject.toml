@@ -1,0 +1,39 @@
+[project]
+name = "EEMs-toolkit"
+description = "EMs-toolkit是一个可以在Python上对三维荧光（EEM）进行平行因子分析（PARAFAC）的工具包，功能大致类似于MATLAB的drEEM toolbox。"
+authors = [{ name = "HHhyJJ" }]
+maintainers = [{ name = "HHhyJJ" }]
+version = "0.2.0"
+readme = "README.md"
+dependencies = [
+    "numpy>=2.4.6",
+    "scipy>=1.17.1",
+    "matplotlib>=3.11.2",
+    "pandas>=3.1.1",
+    "xlrd>=2.0.2",
+    "openpyxl>=3.1.5",
+    "tensorly>=0.10.0",
+    "tlviz>=0.1.1",
+]
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Repository = "https://github.com/HHhyJJ/EEMs-toolkit"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
