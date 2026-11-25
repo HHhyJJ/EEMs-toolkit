@@ -1,7 +1,3 @@
-# -*- coding = utf-8 -*-
-# @TIME : 2023/01/10 12:29
-# @File : EEMs_toolkit.py
-# @Software : PyCharm
 from __future__ import annotations
 
 import os
@@ -12,7 +8,6 @@ import numpy as np
 import tensorly as tl
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata, interp1d
-from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks, savgol_filter
 from tensorly.decomposition import non_negative_parafac_hals
@@ -20,135 +15,14 @@ from tensorly.cp_tensor import CPTensor
 from typing import Optional, Sequence, Iterable, overload
 from multiprocessing.pool import Pool
 from pathlib import Path
+from .absorbance import Abs
+from .constant import WATER_FREQ, N_SPLIT, CROSS, PEAK_A, PEAK_B, PEAK_C, PEAK_D, PEAK_M, PEAK_N, PEAK_T, PEAKS, \
+    RAMAN_EM_RANGE, RAMAN_EX, FLUI, FREI, HIX, BIX
 
 try:
     from numpy import trapezoid
 except ImportError:
-    from numpy import trapz as trapezoid
-
-# slope fit
-S_275_295 = (275, 295)
-S_350_400 = (350, 400)
-LONG_RANGE = (300, 600)
-# flu indices
-PEAKS = 'BTAMCDN'
-PEAK_B = (305, 275)
-PEAK_T = (340, 275)
-PEAK_A = ((400, 460), 260)
-PEAK_M = ((370, 410), (290, 310))
-PEAK_C = ((420, 460), (320, 360))
-PEAK_D = (509, 390)
-PEAK_N = (370, 280)
-FLUI = ((470, 520), 370)
-FREI = ((380, (420, 430)), 310)
-HIX = (((435, 480), (300, 345)), 254)
-BIX = ((380, 430), 310)
-# Raman Unit
-RAMAN_EX = 350
-RAMAN_EM_RANGE = (378, 424)
-WATER_FREQ = 3382
-# Split Analysis
-N_SPLIT = 4
-CROSS = (
-    ((0, 1), (2, 3)),
-    ((0, 2), (1, 3)),
-    ((0, 3), (1, 2)),
-)
-
-
-#  read files
-
-def read_eems(file_list: Iterable[str], eem_path: str) -> EEMsDataset:
-    """
-    Read the EEM samples with different Ex in columns and different Em in rows.
-    The header is Ex and the index is Em.
-
-    :param file_list: A list of eem filenames.
-    :param eem_path: The directory where the EEM files saved.
-    :return: EEMsDataset.
-    """
-    file_list = list(file_list)
-    nums = len(file_list)
-    root = Path(eem_path)
-    x = []
-    try:
-        for j, i in enumerate(file_list):
-            file_path: Path = root / i
-            if not file_path.exists():
-                raise FileNotFoundError(str(file_path))
-            c = pd.read_excel(file_path, header=None)
-            x.append(c.values[1:, 1:])
-            print(f'EEM {i} has been read. {j + 1} of {nums}')
-        ex = c.values[0, 1:]
-        em = c.values[1:, 0]
-    except Exception as e:
-        raise e
-
-    fl = [i.split('.')[0] for i in file_list]
-    try:
-        x = np.array(x)
-        return EEMsDataset(x, ex, em, fl)
-    except Exception as e:
-        raise e
-
-
-def read_abs(file_list: Iterable[str], abs_path: str) -> Abs:
-    """
-    Read the Abs samples.
-
-    :param file_list:  A list of abs filenames.
-    :param abs_path: The directory where the Abs files saved.
-    :return: Absorbance dataset.
-    """
-    file_list = list(file_list)
-    file_list_: set[str] = set(file_list)
-    nums = len(file_list_)
-    root = Path(abs_path)
-    d = dict()
-    try:
-        for j, i in enumerate(file_list_):
-            file_path = root / i
-            if not file_path.exists():
-                raise FileNotFoundError(str(file_path))
-            c = pd.read_excel(file_path, header=None)
-            print(f'Abs {i} has been read. {j + 1} of {nums}')
-            t = c.values
-            if t.shape[0] == 2:
-                t = t.T
-            d[i] = t[:, 1]
-        wave = t[:, 0]
-        data = np.array([d[i] for i in file_list])
-        return Abs(wave, data, file_list)
-    except Exception as e:
-        raise e
-
-
-def read_blank(file_list: Iterable[str], blank_path: str) -> np.ndarray[tuple[int, int, int], np.dtype[np.float64]]:
-    """
-    Read the blank EEM samples with different Ex in columns and different Em in rows.
-    The header is Ex and the index is Em.
-
-    :param file_list: A list of blank filenames.
-    :param blank_path: The directory where the blank EEMs files saved.
-    :return: blank_eem
-    """
-    file_list = list(file_list)
-    file_list_: set[str] = set(file_list)
-    nums = len(file_list_)
-    root = Path(blank_path)
-    d = dict()
-    try:
-        for j, i in enumerate(file_list_):
-            file_path = root / i
-            if not file_path.exists():
-                raise FileNotFoundError(str(file_path))
-            c = pd.read_excel(file_path, header=None)
-            print(f'Blank {i} has been read. {j + 1} of {nums}')
-            d[i] = c.values[1:, 1:]
-        blank_eem = np.array([d[i] for i in file_list])
-        return blank_eem
-    except Exception as e:
-        raise e
+    from numpy import trapz as trapezoid  # type: ignore
 
 
 class EEMsDataset:
@@ -162,8 +36,7 @@ class EEMsDataset:
             x: np.ndarray[tuple[int, int, int], np.dtype[np.float64]],
             ex: np.ndarray[tuple[int], np.dtype[np.float64]],
             em: np.ndarray[tuple[int], np.dtype[np.float64]],
-            file_list: Optional[np.ndarray[tuple[int],
-            np.dtype[np.str_]]] | Sequence[str] = None,
+            file_list: Optional[np.ndarray[tuple[int], np.dtype[np.str_]]] | Sequence[str] = None,
     ):
         self.x = np.asarray(x)
         self.nSample = x.shape[0]
@@ -203,10 +76,9 @@ class EEMsDataset:
             return
         ex_row = self.ex[None, :]  # (1, nex)
         em_col = self.em[:, None]  # (nem, 1)
-        mask = np.zeros((self.nem, self.nex), dtype=bool)
+        mask = np.zeros((self.nem, self.nex), dtype=np.bool_)
         if first[0] != 0 or first[1] != 0:
-            mask |= (em_col >= ex_row - first[0]
-                     ) & (em_col <= ex_row + first[1])
+            mask |= (em_col >= ex_row - first[0]) & (em_col <= ex_row + first[1])
         if second[0] != 0 or second[1] != 0:
             ex2 = 2.0 * ex_row
             mask |= (em_col >= ex2 - second[0]) & (em_col <= ex2 + second[1])
@@ -227,10 +99,9 @@ class EEMsDataset:
         ram = 1.0 / (1.0 / self.ex - freq / 1e7)  # (nex,)
         ram_row = ram[None, :]  # (1, nex)
         em_col = self.em[:, None]  # (nem, 1)
-        mask = np.zeros((self.nem, self.nex), dtype=bool)
+        mask = np.zeros((self.nem, self.nex), dtype=np.bool_)
         if first[0] != 0 or first[1] != 0:
-            mask |= (em_col >= ram_row -
-                     first[0]) & (em_col <= ram_row + first[1])
+            mask |= (em_col >= ram_row - first[0]) & (em_col <= ram_row + first[1])
         if second[0] != 0 or second[1] != 0:
             ram2 = 2.0 * ram_row
             mask |= (em_col >= ram2 - second[0]) & (em_col <= ram2 + second[1])
@@ -247,8 +118,7 @@ class EEMsDataset:
         x, y = np.meshgrid(self.ex, self.em)
         for j, i in enumerate(self.x):
             nan_ed = np.where(~np.isnan(i.astype('float')))
-            self.x[j] = griddata(
-                (self.ex[nan_ed[1]], self.em[nan_ed[0]]), i[nan_ed], (x, y), method='cubic')
+            self.x[j] = griddata((self.ex[nan_ed[1]], self.em[nan_ed[0]]), i[nan_ed], (x, y), method='cubic')  # type: ignore
         self.x[self.x < 0] = 0
         print('Interpolation done.')
 
@@ -278,10 +148,8 @@ class EEMsDataset:
     def sub_dataset(
             self,
             sample_orders: Optional[list[int]] = None,
-            ex_orders: Optional[np.ndarray[tuple[int],
-            np.dtype[np.bool_]]] = None,
-            em_orders: Optional[np.ndarray[tuple[int],
-            np.dtype[np.bool_]]] = None,
+            ex_orders: Optional[np.ndarray[tuple[int], np.dtype[np.bool_]]] = None,
+            em_orders: Optional[np.ndarray[tuple[int], np.dtype[np.bool_]]] = None,
     ):
         """
         Removing samples and/or wavelengths in place.
@@ -406,10 +274,8 @@ class EEMsDataset:
 
         :param hix_type: Optional, 0 means v1/(v1+v2) else v1/v2. Default is 0.
         """
-        ex = range(int(np.ceil(self.ex.min())),
-                   int(np.floor(self.ex.max())) + 1, 1)
-        em = range(int(np.ceil(self.em.min())),
-                   int(np.floor(self.em.max())) + 1, 1)
+        ex = range(int(np.ceil(self.ex.min())), int(np.floor(self.ex.max())) + 1, 1)
+        em = range(int(np.ceil(self.em.min())), int(np.floor(self.em.max())) + 1, 1)
         ex_index = {i: j for j, i in enumerate(ex)}
         em_index = {i: j for j, i in enumerate(em)}
         checked = {i: False for i in PEAKS}
@@ -449,23 +315,17 @@ class EEMsDataset:
         fl, fre, hix, bix = [], [], [], []
         for i in self.x:
             nan_ed = np.where(~np.isnan(i))
-            fitted = griddata((self.ex[nan_ed[1]], self.em[nan_ed[0]]), i[nan_ed],
-                              (x, y), method='linear')
+            fitted = griddata((self.ex[nan_ed[1]], self.em[nan_ed[0]]), i[nan_ed], (x, y), method='linear')  # type: ignore
             if checked['B']:
-                _peaks['B'].append(
-                    fitted[em_index[PEAK_B[0]], ex_index[PEAK_B[1]]])
+                _peaks['B'].append(fitted[em_index[PEAK_B[0]], ex_index[PEAK_B[1]]])
             if checked['T']:
-                _peaks['T'].append(
-                    fitted[em_index[PEAK_T[0]], ex_index[PEAK_T[1]]])
+                _peaks['T'].append(fitted[em_index[PEAK_T[0]], ex_index[PEAK_T[1]]])
             if checked['A']:
-                _peaks['A'].append(fitted[em_index[PEAK_A[0][0]]:em_index[PEAK_A[0][1]] + 1,
-                                   ex_index[PEAK_A[1]]].max())
+                _peaks['A'].append(fitted[em_index[PEAK_A[0][0]]:em_index[PEAK_A[0][1]] + 1, ex_index[PEAK_A[1]]].max())
             if checked['M']:
-                _peaks['M'].append(fitted[em_index[PEAK_M[0][0]]:em_index[PEAK_M[0][1]] + 1,
-                                   ex_index[PEAK_M[1][0]]:ex_index[PEAK_M[1][1]] + 1].max())
+                _peaks['M'].append(fitted[em_index[PEAK_M[0][0]]:em_index[PEAK_M[0][1]] + 1, ex_index[PEAK_M[1][0]]:ex_index[PEAK_M[1][1]] + 1].max())
             if checked['C']:
-                _peaks['C'].append(fitted[em_index[PEAK_C[0][0]]:em_index[PEAK_C[0][1]],
-                                   ex_index[PEAK_C[1][0]]:ex_index[PEAK_C[1][1]] + 1].max())
+                _peaks['C'].append(fitted[em_index[PEAK_C[0][0]]:em_index[PEAK_C[0][1]], ex_index[PEAK_C[1][0]]:ex_index[PEAK_C[1][1]] + 1].max())
             if checked['D']:
                 _peaks['D'].append(
                     fitted[em_index[PEAK_D[0]], ex_index[PEAK_D[1]]])
@@ -475,24 +335,21 @@ class EEMsDataset:
 
             if checked['FluI']:
                 scan370 = savgol_filter(fitted[:, ex_index[FLUI[1]]], 21, 2)
-                fl.append(scan370[em_index[FLUI[0][0]]] /
-                          scan370[em_index[FLUI[0][1]]])
+                fl.append(scan370[em_index[FLUI[0][0]]] / scan370[em_index[FLUI[0][1]]])
             if checked['FreI']:
                 scan310 = savgol_filter(fitted[:, ex_index[FREI[1]]], 21, 2)
-                fre.append(
-                    scan310[em_index[FREI[0][0]]] / scan310[em_index[FREI[0][1][0]]:em_index[FREI[0][1][1]] + 1].max())
+                fre.append(scan310[em_index[FREI[0][0]]] / scan310[em_index[FREI[0][1][0]]:em_index[FREI[0][1][1]] + 1].max())  # type: ignore
             if checked['HIX']:
                 scan254 = savgol_filter(fitted[:, ex_index[HIX[1]] + 1], 21, 2)
-                v1 = scan254[em_index[HIX[0][0][0]]:em_index[HIX[0][0][1]] + 1].sum()
-                v2 = scan254[em_index[HIX[0][1][0]]:em_index[HIX[0][1][1]] + 1].sum()
+                v1 = scan254[em_index[HIX[0][0][0]]:em_index[HIX[0][0][1]] + 1].sum()  # type: ignore
+                v2 = scan254[em_index[HIX[0][1][0]]:em_index[HIX[0][1][1]] + 1].sum()  # type: ignore
                 if hix_type == 0:
                     hix.append(v1 / (v1 + v2))
                 else:
                     hix.append(v1 / v2)
             if checked['BIX']:
                 scan310 = savgol_filter(fitted[:, ex_index[FREI[1]]], 21, 2)
-                bix.append(scan310[em_index[BIX[0][0]]] /
-                           scan310[em_index[BIX[0][1]]])
+                bix.append(scan310[em_index[BIX[0][0]]] / scan310[em_index[BIX[0][1]]])
         out = pd.DataFrame()
         for i in letter:
             if checked[i]:
@@ -527,36 +384,28 @@ class EEMsDataset:
             raise ValueError("Regions 2, 3, and 5 do not exist!")
         elif self.em.max() <= 380:
             raise ValueError("Regions 3 and 5 do not exist!")
-        ex = np.arange(np.ceil(self.ex.min()),
-                       np.floor(self.ex.max()) + 0.5, 0.5)
-        em = np.arange(np.ceil(self.em.min()),
-                       np.floor(self.em.max()) + 0.5, 0.5)
+        ex = np.arange(np.ceil(self.ex.min()), np.floor(self.ex.max()) + 0.5, 0.5)
+        em = np.arange(np.ceil(self.em.min()), np.floor(self.em.max()) + 0.5, 0.5)
         xx, yy = np.meshgrid(ex, em)
-        new_x = np.zeros(
-            (self.nSample, em.shape[0], ex.shape[0]), dtype=np.float64)
+        new_x = np.zeros((self.nSample, em.shape[0], ex.shape[0]), dtype=np.float64)
         # nan_ed = np.where(~np.isnan(self.x[0]))
         for j, i in enumerate(self.x):
             nan_ed = np.where(~np.isnan(i))
-            new_x[j] = griddata((self.ex[nan_ed[1]], self.em[nan_ed[0]]), i[nan_ed],  # noqa
-                                (xx, yy), method='linear')
+            new_x[j] = griddata((self.ex[nan_ed[1]], self.em[nan_ed[0]]), i[nan_ed], (xx, yy), method='linear')  # type: ignore
         new_x[new_x < 0] = 0
-        for i, ii in enumerate(ex):
-            for j, jj in enumerate(em):
-                if ii >= jj:
-                    new_x[:, j, i] = 0
+        mask = ex[None, :] > em[:, None]
+        new_x[:, mask] = 0
         s = np.zeros((5,))
         s[1] = (250 - ex.min()) * (380 - 330)
         s[2] = (250 - ex.min()) * (em.max() - 380)
         if em.min() < 250:
             if ex.min() < em.min():
-                s[0] = (250 - ex.min()) * (330 - em.min()) - \
-                       0.5 * (250 - em.min()) ** 2
+                s[0] = (250 - ex.min()) * (330 - em.min()) - 0.5 * (250 - em.min()) ** 2
             else:
                 s[0] = 0.5 * (330 - 250 + 330 - ex.min()) * (250 - ex.min())
             if ex.max() >= 380:
                 s[3] = 0.5 * (380 - 250) ** 2
-                s[4] = (ex.max() - 250) * (em.max() - 380) - \
-                       0.5 * (ex.max() - 380) ** 2
+                s[4] = (ex.max() - 250) * (em.max() - 380) - 0.5 * (ex.max() - 380) ** 2
             else:
                 s[3] = 0.5 * (ex.max() - 250) * (380 - ex.max() + 380 - 250)
                 s[4] = (ex.max() - 250) * (em.max() - 380)
@@ -564,12 +413,9 @@ class EEMsDataset:
             s[0] = (250 - ex.min()) * (330 - em.min())
             if ex.max() >= 380:
                 s[3] = 0.5 * (em.min() - 250 + 380 - 250) * (380 - em.min())
-                s[4] = (ex.max() - 250) * (em.max() - 380) - \
-                       0.5 * (ex.max() - 380) ** 2
+                s[4] = (ex.max() - 250) * (em.max() - 380) - 0.5 * (ex.max() - 380) ** 2
             else:
-                s[3] = (em.min() - 250) * (380 - em.min()) + \
-                       0.5 * (ex.max() - em.min()) * \
-                       (380 - ex.max() + 380 - em.min())
+                s[3] = (em.min() - 250) * (380 - em.min()) + 0.5 * (ex.max() - em.min()) * (380 - ex.max() + 380 - em.min())
                 s[4] = (ex.max() - 250) * (em.max() - 380)
         index = [[[np.where(ex == 250)[0][0], np.argmin(ex)],
                   [np.where(em == 330)[0][0], np.argmin(em)]],
@@ -586,10 +432,14 @@ class EEMsDataset:
         for i in range(self.nSample):
             t = new_x[i]
             for j in range(5):
-                ts = t[index[j][1][1]:index[j][1][0] +
-                                      1, index[j][0][1]:index[j][0][0] + 1]
-                phi[i, j] = trapezoid(trapezoid(ts, ex[index[j][0][1]:index[j][0][0] + 1], axis=1),
-                                      em[index[j][1][1]:index[j][1][0] + 1])
+                ts = t[index[j][1][1]:index[j][1][0] + 1, index[j][0][1]:index[j][0][0] + 1]
+                phi[i, j] = trapezoid(
+                    trapezoid(
+                        ts,
+                        ex[index[j][0][1]:index[j][0][0] + 1], axis=1
+                    ),
+                    em[index[j][1][1]:index[j][1][0] + 1]
+                )
                 p[i, j] = phi[i, j] * s[j]
         p = (p.T / p.sum(axis=1).T).T
         s = s.reshape((1, 5))
@@ -597,14 +447,12 @@ class EEMsDataset:
 
     @overload
     @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *,
-                          j: None = None) -> tuple[CPTensor | tuple, int]:
+    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: None = None) -> tuple[CPTensor | tuple, int]:
         ...
 
     @overload
     @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: int) -> tuple[
-        CPTensor | tuple, int, int]:
+    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: int) -> tuple[CPTensor | tuple, int, int]:
         ...
 
     #  Parallel Factors Analysis
@@ -686,21 +534,15 @@ class EEMsDataset:
         self.explanation_rate.clear()
         for fi in results:
             res_i = results[fi]
-            best_model = tlviz.multimodel_evaluation.get_model_with_lowest_error(
-                res_i, self.x)
-            best_model = tlviz.factor_tools.distribute_weights_in_one_mode(
-                best_model, mode=0)
+            best_model = tlviz.multimodel_evaluation.get_model_with_lowest_error(res_i, self.x)
+            best_model = tlviz.factor_tools.distribute_weights_in_one_mode(best_model, mode=0)
             best_model = tlviz.factor_tools.permute_cp_tensor(best_model)
             post_results[fi] = best_model
             model = tl.cp_tensor.cp_to_tensor(best_model)
-            self.leverage[fi] = tlviz.outliers.compute_leverage(
-                best_model[1][0])
-            self.sse[fi] = tlviz.outliers.compute_slabwise_sse(
-                model, self.x, normalise=True)
-            self.core_consistency[fi] = tlviz.model_evaluation.core_consistency(
-                best_model, self.x, normalised=True)
-            self.explanation_rate[fi] = 1 - tlviz.model_evaluation.relative_sse(
-                best_model, self.x)
+            self.leverage[fi] = tlviz.outliers.compute_leverage(best_model[1][0])
+            self.sse[fi] = tlviz.outliers.compute_slabwise_sse(model, self.x, normalise=True)
+            self.core_consistency[fi] = tlviz.model_evaluation.core_consistency(best_model, self.x, normalised=True)
+            self.explanation_rate[fi] = 1 - tlviz.model_evaluation.relative_sse(best_model, self.x)
         self.factors = post_results
 
     def split_analysis(
@@ -741,8 +583,7 @@ class EEMsDataset:
         rng = np.random.RandomState(random_state)
         rng.shuffle(index)
         cn = int(N_SPLIT * (N_SPLIT - 1) / 1 / 2)  # C(4, 2)
-        index_split = [index[i * self.nSample //
-                             N_SPLIT:(i + 1) * self.nSample // N_SPLIT] for i in range(N_SPLIT)]
+        index_split = [index[i * self.nSample // N_SPLIT:(i + 1) * self.nSample // N_SPLIT] for i in range(N_SPLIT)]
         splits = [self.x[i] for i in index_split]
         results = {i: [[] for _ in range(cn)] for i in fs}
 
@@ -782,16 +623,11 @@ class EEMsDataset:
         for fi in fs:
             for ji, jj in enumerate(results[fi]):
                 c1, c2 = divmod(ji, 2)
-                x = np.concatenate(
-                    (splits[CROSS[c1][c2][0]], splits[CROSS[c1][c2][1]]), axis=0)
-                best_model = tlviz.multimodel_evaluation.get_model_with_lowest_error(
-                    jj, x)
-                best_model = tlviz.factor_tools.distribute_weights_in_one_mode(
-                    best_model, mode=0)
-                order = tlviz.factor_tools.get_factor_matrix_permutation(
-                    self.factors[fi][1][1], best_model[1][1])
-                best_model = tlviz.factor_tools.permute_cp_tensor(
-                    best_model, permutation=tuple(order))
+                x = np.concatenate((splits[CROSS[c1][c2][0]], splits[CROSS[c1][c2][1]]), axis=0)
+                best_model = tlviz.multimodel_evaluation.get_model_with_lowest_error(jj, x)
+                best_model = tlviz.factor_tools.distribute_weights_in_one_mode(best_model, mode=0)
+                order = tlviz.factor_tools.get_factor_matrix_permutation(self.factors[fi][1][1], best_model[1][1])
+                best_model = tlviz.factor_tools.permute_cp_tensor(best_model, permutation=tuple(order))
                 results[fi][ji] = best_model  # type: ignore
         self.split_result = results
 
@@ -842,8 +678,7 @@ class EEMsDataset:
 
     #  Plot Functions
 
-    def plot_eem_by1(self, f: Optional[int] = None, sample_id: Optional[np.typing.ArrayLike] = None,
-                     plot_3d: bool = False):
+    def plot_eem_by1(self, f: Optional[int] = None, sample_id: Optional[np.typing.ArrayLike] = None, plot_3d: bool = False):
         """
         Plot EEMs
 
@@ -881,8 +716,7 @@ class EEMsDataset:
             else:
                 ax.set_title(
                     f'Model {f} for sample {i + 1}', fontsize=13)
-            plt.subplots_adjust(left=0.13, bottom=0.11,
-                                right=0.95, top=0.9)
+            plt.subplots_adjust(left=0.13, bottom=0.11, right=0.95, top=0.9)
 
     def plot_fri(self, sample_id: Optional[Sequence[int]] = None):
         """
@@ -899,8 +733,7 @@ class EEMsDataset:
             plt.contourf(self.em, self.ex, self.x[i].T)
             plt.axvline(380, color='k', linestyle='--')
             plt.axhline(250, color='k', linestyle='--')
-            plt.axvline(330, ymax=(250 - self.ex.min()) /
-                                  (self.ex.max() - self.ex.min()), color='k', linestyle='--', )
+            plt.axvline(330, ymax=(250 - self.ex.min()) / (self.ex.max() - self.ex.min()), color='k', linestyle='--', )
             plt.text((self.em.min() + 330) / 2, (self.ex.min() + 250) / 2, 'Ⅰ',
                      ha='center', va='center', font='SimHei', color='w', fontsize=15)
             plt.text((380 + 330) / 2, (self.ex.min() + 250) / 2, 'Ⅱ',
@@ -930,8 +763,7 @@ class EEMsDataset:
         # fig.canvas.manager.set_window_title(f'Plot the outlier test of {f}-component model')
         plt.scatter(self.leverage[f], self.sse[f])
         for i in range(len(self.sse[f])):
-            plt.annotate(f'{self.i[i] + 1}: {self.file_list[i]}',
-                         (self.leverage[f][i], self.sse[f][i]))
+            plt.annotate(f'{self.i[i] + 1}: {self.file_list[i]}', (self.leverage[f][i], self.sse[f][i]))
         plt.xlabel('Leverage', fontsize=11)
         plt.ylabel('SSE', fontsize=11)
         plt.title(f'Outlier plot for {f} components', fontsize=13)
@@ -971,8 +803,7 @@ class EEMsDataset:
             plt.ylabel('Emission/nm', fontsize=11)
             plt.title(f'Residual', fontsize=13)
             plt.colorbar()
-            plt.subplots_adjust(left=0.07, bottom=0.13,
-                                right=0.94, top=0.9, wspace=0.24, hspace=0.2)
+            plt.subplots_adjust(left=0.07, bottom=0.13, right=0.94, top=0.9, wspace=0.24, hspace=0.2)
 
     def plot_core_consistency_and_explanation(self):
         """
@@ -997,8 +828,7 @@ class EEMsDataset:
         plt.ylabel('%', fontsize=11)
         plt.xticks(fs)
         print(f'Explanation rate: {self.explanation_rate}')
-        plt.subplots_adjust(left=0.07, bottom=0.13, right=0.94,
-                            top=0.9, wspace=0.24, hspace=0.2)
+        plt.subplots_adjust(left=0.07, bottom=0.13, right=0.94, top=0.9, wspace=0.24, hspace=0.2)
 
     def plot_split_result(self, f: int):
         """
@@ -1029,10 +859,8 @@ class EEMsDataset:
                 axes[1, ind].plot(self.ex, self.factors[f][1][2][:, jix],
                                   ls=':', label=f'Overall comp {jix + 1}', c=line.get_color())
         lines, labels = axes[0, 0].get_legend_handles_labels()
-        fig.legend(lines, labels, framealpha=0.6, loc='center right',
-                   fontsize=11, frameon=True, shadow=False, bbox_to_anchor=(1.0, 0.5))
-        fig.subplots_adjust(left=0.1, bottom=0.1, right=0.83,
-                            top=0.87, wspace=0.3, hspace=0.47)
+        fig.legend(lines, labels, framealpha=0.6, loc='center right', fontsize=11, frameon=True, shadow=False, bbox_to_anchor=(1.0, 0.5))
+        fig.subplots_adjust(left=0.1, bottom=0.1, right=0.83, top=0.87, wspace=0.3, hspace=0.47)
 
     def plot_fmax(self, f: int, use_file_list: bool = False):
         """
@@ -1042,8 +870,7 @@ class EEMsDataset:
         """
         _ = plt.figure(figsize=(6, 4.8))
         # fig.canvas.manager.set_window_title(f'FMax plot of {f}-component')
-        fmax = self.factors[f][1][0] * \
-               self.factors[f][1][1].max(axis=0) * self.factors[f][1][2].max(axis=0)
+        fmax = self.factors[f][1][0] * self.factors[f][1][1].max(axis=0) * self.factors[f][1][2].max(axis=0)
         for i in range(f):
             plt.plot(fmax[:, i], label=f'Component {i + 1}')
         plt.xlabel('Sample', fontsize=11)
@@ -1051,8 +878,7 @@ class EEMsDataset:
             plt.xticks(range(self.nSample), self.file_list)  # type: ignore
         plt.ylabel('FMax', fontsize=11)
         plt.title('FMax for the samples', fontsize=13)
-        plt.legend(framealpha=0.6, loc='upper right',
-                   fontsize=11, frameon=True, shadow=False)
+        plt.legend(framealpha=0.6, loc='upper right', fontsize=11, frameon=True, shadow=False)
         plt.subplots_adjust(left=0.13, bottom=0.11, right=0.95, top=0.9)
 
     def plot_fingers(self, f: int):
@@ -1097,8 +923,7 @@ class EEMsDataset:
                 plt.ylabel('Emission/nm', fontsize=11)
             if ii > (r - 1) * c:
                 plt.xlabel('Excitation/nm', fontsize=11)
-        plt.subplots_adjust(left=left, bottom=bottom,
-                            right=0.94, top=top, wspace=0.24, hspace=0.2)
+        plt.subplots_adjust(left=left, bottom=bottom, right=0.94, top=top, wspace=0.24, hspace=0.2)
 
     def plot_loadings(self, f: int):
         """
@@ -1117,18 +942,15 @@ class EEMsDataset:
             plt.subplot(r, c, ii)
             plt.plot(self.ex, self.factors[f][1][2][:, ii - 1], label='Ex')
             plt.plot(self.em, self.factors[f][1][1][:, ii - 1], label='Em')
-            plt.legend(framealpha=0.6, loc='upper right',
-                       fontsize=11, frameon=True, shadow=False)
-            plt.xlim(min(self.ex.min(), self.em.min()),
-                     max(self.ex.max(), self.em.max()))
+            plt.legend(framealpha=0.6, loc='upper right', fontsize=11, frameon=True, shadow=False)
+            plt.xlim(min(self.ex.min(), self.em.min()), max(self.ex.max(), self.em.max()))
             plt.ylim(0)
             plt.title(f'Component {ii}', fontsize=13)
             if ii % c == 1:
                 plt.ylabel('Loadings', fontsize=11)
             if ii > (r - 1) * c:
-                plt.xlabel('$\lambda$/nm', fontsize=11)
-        plt.subplots_adjust(left=left, bottom=bottom,
-                            right=0.94, top=top, wspace=0.24, hspace=0.2)
+                plt.xlabel('$\lambda$/nm', fontsize=11)  # type: ignore
+        plt.subplots_adjust(left=left, bottom=bottom, right=0.94, top=top, wspace=0.24, hspace=0.2)
 
     #  Data output
     def open_fluor(self, f: int, output_path: Optional[str] = None, filename: str = 'model.txt', **kwargs):
@@ -1197,8 +1019,7 @@ class EEMsDataset:
             else:
                 file_name = Path(output_path) / f"{self.file_list[i]}.xlsx"
             out.to_excel(file_name, header=False, index=False)
-            print(
-                f'EEM {self.file_list[i]} is saved at {str(file_name)}. {i + 1} of {self.nSample}')
+            print(f'EEM {self.file_list[i]} is saved at {str(file_name)}. {i + 1} of {self.nSample}')
         print('All saved.')
 
     def parafac_result_output(self, f: int, output_path: Optional[str] = None, filename: str = 'parafac-result.xlsx'):
@@ -1213,11 +1034,9 @@ class EEMsDataset:
             self.factors[f][1][0] * self.factors[f][1][1].max(axis=0) * self.factors[f][1][2].max(axis=0),
             columns=[f'FMax{i + 1}' for i in range(f)])
         fmax.insert(loc=0, column='EEM', value=self.file_list)
-        em_loadings = pd.DataFrame(self.factors[f][1][1],
-                                   columns=[f'Em{i + 1}' for i in range(f)])
+        em_loadings = pd.DataFrame(self.factors[f][1][1], columns=[f'Em{i + 1}' for i in range(f)])
         em_loadings.insert(loc=0, column='Em', value=self.em)
-        ex_loadings = pd.DataFrame(self.factors[f][1][2],
-                                   columns=[f'Ex{i + 1}' for i in range(f)])
+        ex_loadings = pd.DataFrame(self.factors[f][1][2], columns=[f'Ex{i + 1}' for i in range(f)])
         ex_loadings.insert(loc=0, column='Ex', value=self.ex)
         out_model = []
         for i in range(f):
@@ -1239,8 +1058,7 @@ class EEMsDataset:
             em_loadings.to_excel(writer, sheet_name='Em loadings', index=False)
             ex_loadings.to_excel(writer, sheet_name='Ex loadings', index=False)
             for j in range(len(out_model)):
-                out_model[j].to_excel(
-                    writer, sheet_name=f'C{j + 1}', header=False, index=False)
+                out_model[j].to_excel(writer, sheet_name=f'C{j + 1}', header=False, index=False)
         print(f'PARAFAC result saved at {str(file_name)}')
 
     def fri_result_output(self, output_path: Optional[str] = None, filename: str = 'FRI.xlsx'):
@@ -1262,15 +1080,12 @@ class EEMsDataset:
         else:
             file_name = Path(output_path) / filename
         with pd.ExcelWriter(file_name) as writer:
-            pfr.to_excel(
-                writer, sheet_name='percent fluorescence response', index=False)
+            pfr.to_excel(writer, sheet_name='percent fluorescence response', index=False)
             volume.to_excel(writer, sheet_name='volume', index=False)
-            mf.to_excel(
-                writer, sheet_name='multiplication factor', index=False)
+            mf.to_excel(writer, sheet_name='multiplication factor', index=False)
         print(f'FRI result saved at {str(file_name)}')
 
-    def fluorescence_indices_output(self, output_path: Optional[str] = None,
-                                    output_name: str = 'fluorescence_indices.xlsx'):
+    def fluorescence_indices_output(self, output_path: Optional[str] = None, output_name: str = 'fluorescence_indices.xlsx'):
         """
         Calculate fluorescence indices and output
 
@@ -1284,111 +1099,3 @@ class EEMsDataset:
             file_name = Path(output_path) / output_name
         df.to_excel(file_name, index=False)
         print(f'Flu Indices result saved at {str(file_name)}')
-
-
-class Abs:
-    """
-    The object of absorbance dataset
-    """
-
-    def __init__(self, wavelength: np.ndarray, absorbance: np.ndarray,
-                 file_list: Sequence[str]):
-        """
-        :param wavelength: The wavelengths of Abs.
-        :param absorbance: A matrix with different samples in rows and different wavelengths in columns.
-        :param file_list: File list of each sample.
-        """
-
-        sorted_abs_id = sorted(
-            range(wavelength.shape[0]), key=lambda k: wavelength[k])
-        self.wavelength = wavelength[sorted_abs_id]
-        if absorbance.shape[1] == wavelength.shape[0]:
-            self.absorbance = absorbance
-        elif absorbance.shape[0] == wavelength.shape[0]:
-            self.absorbance = absorbance.T
-        else:
-            return
-        self.absorbance = self.absorbance[:, sorted_abs_id]
-        self.interp = [interp1d(self.wavelength, self.absorbance[i, :])
-                       for i in range(self.absorbance.shape[0])]
-        self.file_list = np.array(file_list)
-
-    def slope_fit(self, long_range: tuple[int, int] = LONG_RANGE) -> pd.DataFrame:
-        """
-        Fit spectral slopes in two different areas of the CDOM absorbance spectrum.
-        It will create a new excel file named 'slope_fit_result.xlsx' in the current directory.
-        Exponential model: y = a350*exp(S/1000*(350-lambda))+k
-            Reference DOI: 10.4319/lo.2008.53.3.0955, 10.4319/lo.2001.46.8.2087
-
-        :param long_range: Wavelength range for the long wavelength slope. Default is (300, 600).
-        :return: A DataFrame of results.
-        """
-
-        def fit_fun(x, *args):
-            b1, b2, b3 = args
-            return b1 * np.exp(b2 / 1000 * (350 - x)) + b3
-
-        def r_squared(aa, y_true, ww):
-            y_p = np.polyval(aa, ww)
-            r2 = 1 - ((y_p - y_true) ** 2).sum() / \
-                 ((y_true - y_true.mean()) ** 2).sum()
-            r2_adjust = 1 - (1 - r2) * (len(ww) - 1) / (len(ww) - len(aa))
-            return r2_adjust
-
-        results = {'exp_slope_microm': None,
-                   'S_275_295': None, 'S_350_400': None, 'SR': None}
-        if long_range[0] in self.wavelength and long_range[1] in self.wavelength:
-            index = [np.where(long_range[0] == self.wavelength)[0][0],
-                     np.where(long_range[1] == self.wavelength)[0][0]]
-            ws = self.wavelength[index[0]:index[1] + 1]
-            abc = self.absorbance[:, index[0]:index[1] + 1]
-            r0 = [curve_fit(fit_fun, ws, abc[i, :], p0=[abc[i, :].mean(), 18, 0], maxfev=2500)[0]
-                  for i in range(self.absorbance.shape[0])]
-            fit0 = [(fit_fun(ws, *r0[i]) ** 2).sum() / (abc[i, :] ** 2).sum()
-                    for i in range(self.absorbance.shape[0])]
-            results['exp_slope_microm'] = ([x[1] for x in r0], fit0)
-        if S_275_295[0] in self.wavelength and S_275_295[1] in self.wavelength:
-            index = [np.where(S_275_295[0] == self.wavelength)[0][0],
-                     np.where(S_275_295[1] == self.wavelength)[0][0]]
-            ws = self.wavelength[index[0]:index[1] + 1]
-            abc = np.log(self.absorbance[:, index[0]:index[1] + 1])
-            p1 = [np.polyfit(ws, abc[i, :], 1)
-                  for i in range(self.absorbance.shape[0])]
-            fit = [r_squared(p1[i], abc[i, :], ws)
-                   for i in range(self.absorbance.shape[0])]
-            results['S_275_295'] = ([x[0] * -1e3 for x in p1], fit)
-        if S_350_400[0] in self.wavelength and S_350_400[1] in self.wavelength:
-            index = [np.where(S_350_400[0] == self.wavelength)[0][0],
-                     np.where(S_350_400[1] == self.wavelength)[0][0]]
-            ws = self.wavelength[index[0]:index[1] + 1]
-            abc = np.log(self.absorbance[:, index[0]:index[1] + 1])
-            p1 = [np.polyfit(ws, abc[i, :], 1)
-                  for i in range(self.absorbance.shape[0])]
-            fit = [r_squared(p1[i], abc[i, :], ws)
-                   for i in range(self.absorbance.shape[0])]
-            results['S_350_400'] = ([x[0] * -1e3 for x in p1], fit)
-        if results['S_275_295'] is not None and results['S_350_400'] is not None:
-            results['SR'] = np.array(results['S_275_295'][0]) / np.array(results['S_350_400'][0])  # noqa
-        out = pd.DataFrame()
-        # out['file_list'] = self.file_list
-        if results['exp_slope_microm'] is not None:
-            out['exp_slope_microm'] = results['exp_slope_microm'][0]
-            out['r2_adjust_for_exp_slope_microm'] = results['exp_slope_microm'][1]
-        if results['S_275_295'] is not None:
-            out['S_275_295'] = results['S_275_295'][0]
-            out['r2_adjust_for_S_275_295'] = results['S_275_295'][1]
-        if results['S_350_400'] is not None:
-            out['S_350_400'] = results['S_350_400'][0]
-            out['r2_adjust_for_S_350_400'] = results['S_350_400'][1]
-        if results['SR'] is not None:
-            out['SR'] = results['SR']
-        return out
-
-    def check_wavelength(self, wave: float) -> bool:
-        if self.wavelength[0] <= wave <= self.wavelength[-1]:
-            return True
-        else:
-            return False
-
-    def __call__(self, index: int, wave: np.ndarray) -> np.ndarray[tuple[int, ...], np.dtype[np.float64]]:
-        return self.interp[index](wave)
