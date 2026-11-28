@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import datetime
-import tlviz
 import pandas as pd
 import numpy as np
 import tensorly as tl
@@ -10,13 +8,13 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import griddata, interp1d
 from scipy.ndimage import gaussian_filter
 from scipy.signal import find_peaks, savgol_filter
-from tensorly.decomposition import non_negative_parafac_hals
-from tensorly.cp_tensor import CPTensor
-from typing import Optional, Sequence, Iterable, overload
-from multiprocessing.pool import Pool
+from typing import Optional, Sequence, Iterable
 from pathlib import Path
 from .absorbance import Abs
-from .constant import WATER_FREQ, N_SPLIT, CROSS, PEAK_A, PEAK_B, PEAK_C, PEAK_D, PEAK_M, PEAK_N, PEAK_T, PEAKS, \
+from . import export as _export
+from . import parafac as _parafac
+from .project import take_snapshot, apply_snapshot
+from .constant import WATER_FREQ, CROSS, PEAK_A, PEAK_B, PEAK_C, PEAK_D, PEAK_M, PEAK_N, PEAK_T, PEAKS, \
     RAMAN_EM_RANGE, RAMAN_EX, FLUI, FREI, HIX, BIX
 
 try:
@@ -38,8 +36,8 @@ class EEMsDataset:
             em: np.ndarray[tuple[int], np.dtype[np.float64]],
             file_list: Optional[np.ndarray[tuple[int], np.dtype[np.str_]]] | Sequence[str] = None,
     ):
-        self.x = np.asarray(x)
-        self.nSample = x.shape[0]
+        self.x = np.array(x, dtype=np.float64, copy=True)
+        self.nSample = self.x.shape[0]
         self.ex = ex
         self.em = em
         self.nem = self.em.shape[0]
@@ -244,17 +242,39 @@ class EEMsDataset:
         :param em_range: Optional, a tuple of two elements, range used to calculate the area,
             if not given, it will be (378, 424).
         """
-        em = np.arange(em_range[0], em_range[1] + 0.5, 0.5)
-        ex_index = np.argmin(np.abs(self.ex - ex))
-        em_index = (np.where((self.em - em_range[0]) <= 0)[0][-1],
-                    np.where((self.em - em_range[1]) >= 0)[0][0])
+        em_low, em_high = float(em_range[0]), float(em_range[1])
+        if em_low >= em_high:
+            raise ValueError('em_range must be an increasing (low, high) pair.')
+        if self.nem < 2:
+            raise ValueError('The emission axis is too short for Raman normalisation.')
+        if self.em.min() > em_low or self.em.max() < em_high:
+            raise ValueError(
+                f'em_range {tuple(em_range)} is not covered by the emission axis '
+                f'({float(self.em.min())}, {float(self.em.max())}).'
+            )
+        blank = np.asarray(blank, dtype=np.float64)
         if blank.ndim == 2:
-            blank = np.array([blank for _ in range(self.nSample)])
+            blank = np.repeat(blank[None, ...], self.nSample, axis=0)
+        if blank.shape != (self.nSample, self.nem, self.nex):
+            raise ValueError(
+                f'Blank shape {blank.shape} does not match the dataset '
+                f'({self.nSample}, {self.nem}, {self.nex}).'
+            )
+        em = np.arange(em_range[0], em_range[1] + 0.5, 0.5)
+        ex_index = int(np.argmin(np.abs(self.ex - ex)))
+        em_index = (int(np.where(self.em <= em_low)[0][-1]),
+                    int(np.where(self.em >= em_high)[0][0]))
+        if em_index[0] >= em_index[1]:
+            raise ValueError('The emission axis does not span the Raman integration range.')
         for i in range(self.nSample):
             areal = blank[i, em_index[0]:em_index[1] + 1, ex_index]
+            if not np.isfinite(areal).all():
+                raise ValueError('The blank contains missing values inside the Raman integration range.')
             f = interp1d(self.em[em_index[0]:em_index[1] + 1], areal)
             f_new = f(em)
             RA = trapezoid(f_new, x=em)
+            if not np.isfinite(RA) or RA == 0:
+                raise ValueError('The Raman area is zero or not finite; check the blank sample.')
             self.x[i] /= RA
         self.iu = 'RU'
         print('Raman Units done.')
@@ -445,38 +465,16 @@ class EEMsDataset:
         s = s.reshape((1, 5))
         return p, phi, s
 
-    @overload
-    @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: None = None) -> tuple[CPTensor | tuple, int]:
-        ...
-
-    @overload
-    @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *, j: int) -> tuple[CPTensor | tuple, int, int]:
-        ...
-
     #  Parallel Factors Analysis
-    @staticmethod
-    def _non_parafac_once(x, f: int, tol: float = 1e-6, max_iter: int = 2500, init: str = 'random', *,
-                          j: Optional[int] = None) -> tuple[CPTensor | tuple, int, int] | tuple[CPTensor | tuple, int]:
-        r = non_negative_parafac_hals(
-            tensor=tl.tensor(x),
-            rank=f,
-            n_iter_max=max_iter,
-            init=init, tol=tol,
-            return_errors=False,
-        )
-        # print(f"A {f}-component model has been fitted.")
-        if j is not None:
-            return r, f, j
-        else:
-            return r, f
-
     def multi_non_parafac_cal(
             self, f: Optional[int | Iterable[int]] = None,
             tol: float = 1e-6,
             max_iter: int = 2500,
             starts: int = 10,
+            *,
+            n_processes: Optional[int] = None,
+            progress=None,
+            stop_event=None,
     ):
         """
         Run 'start' times Non-negative CP decomposition via HALS. Uses Hierarchical ALS (Alternating Least Squares)
@@ -487,63 +485,93 @@ class EEMsDataset:
         :param tol: float, optional, the algorithm stops when the variation in the reconstruction
             error is less than the tol. Default: 1e-6
         :param max_iter: int, maximum number of iteration
-        :param start: int, number of models to fit
+        :param starts: int, number of models to fit
+        :param n_processes: Optional, number of worker processes, defaults to min(starts, 8).
+        :param progress: Optional, callback called as progress(done, total, f).
+        :param stop_event: Optional, threading.Event used to cancel the job.
         """
-        if np.any(np.isnan(self.x)):
-            raise ValueError("x contains nan.")
         if f is None:
-            fs = range(2, 6)
             print('Parameter f is not given, use range(2, 6) instead.')
-        elif isinstance(f, int):
-            fs = (f,)
-        else:
-            fs = f
-        num_cores = os.cpu_count()
-        if num_cores is not None:
-            if num_cores >= starts:
-                n = starts
-            else:
-                n = 8
-        else:
-            n = 8
+        fs = _parafac.component_numbers(f, default=range(2, 6))
         print("Fitting started.")
-        results: dict[int, list[CPTensor | tuple]] = {i: [] for i in fs}
-
-        def callback(rtn: tuple[CPTensor | tuple, int]):
-            print(f"A {rtn[1]}-component model has been fitted.")
-            results[rtn[1]].append(rtn[0])
-
-        pool = Pool(n)
-        for fi in fs:
-            for _ in range(starts):
-                pool.apply_async(
-                    self._non_parafac_once,
-                    args=(self.x, fi, tol, max_iter),
-                    callback=callback,
-                    error_callback=lambda e: print(e)
-                )
-        pool.close()
-        pool.join()
+        result = _parafac.fit_models(
+            self.x, fs,
+            starts=starts, tol=tol, max_iter=max_iter,
+            n_processes=n_processes, progress=progress, stop_event=stop_event,
+        )
+        for line in result.log:
+            print(line)
         print("All fits end.")
-        # postprocess
-        post_results: dict[int, tuple] = {}
         self.fac_nums = list(fs)
-        self.leverage.clear()
-        self.sse.clear()
-        self.core_consistency.clear()
-        self.explanation_rate.clear()
-        for fi in results:
-            res_i = results[fi]
-            best_model = tlviz.multimodel_evaluation.get_model_with_lowest_error(res_i, self.x)
-            best_model = tlviz.factor_tools.distribute_weights_in_one_mode(best_model, mode=0)
-            best_model = tlviz.factor_tools.permute_cp_tensor(best_model)
-            post_results[fi] = best_model
-            model = tl.cp_tensor.cp_to_tensor(best_model)
-            self.leverage[fi] = tlviz.outliers.compute_leverage(best_model[1][0])
-            self.sse[fi] = tlviz.outliers.compute_slabwise_sse(model, self.x, normalise=True)
-            self.core_consistency[fi] = tlviz.model_evaluation.core_consistency(best_model, self.x, normalised=True)
-            self.explanation_rate[fi] = 1 - tlviz.model_evaluation.relative_sse(best_model, self.x)
-        self.factors = post_results
+        self.factors = result.factors
+        self.leverage = result.leverage
+        self.sse = result.sse
+        self.core_consistency = result.core_consistency
+        self.explanation_rate = result.explanation_rate
+
+    def sse_analysis(self, f: Optional[int | Iterable[int]] = None) -> dict[int, dict]:
+        """
+        Compute the sum of squared errors (SSE) for fitted models.
+
+        The squared error tensor is aggregated along each of the three axes:
+        per sample, per emission wavelength and per excitation wavelength.
+
+        :param f: int | Iterable, numbers of components. Defaults to the fitted models.
+        :return: {f: {'total': float, 'sample': ndarray, 'em': ndarray, 'ex': ndarray}}
+        """
+        fs = _parafac.component_numbers(f, default=self.fac_nums if self.fac_nums else range(2, 6))
+        fs = [fi for fi in fs if fi in self.factors]
+        if not fs:
+            raise ValueError('No fitted PARAFAC model is available.')
+        result = {}
+        for fi in fs:
+            model = tl.cp_to_tensor(self.factors[fi])
+            squared_error = (model - self.x) ** 2
+            squared_error[np.isnan(squared_error)] = 0
+            result[fi] = {
+                'total': float(squared_error.sum()),
+                'sample': squared_error.sum(axis=(1, 2)),
+                'em': squared_error.sum(axis=(0, 2)),
+                'ex': squared_error.sum(axis=(0, 1)),
+            }
+        return result
+
+    def plot_sse(self, f: Optional[int | Iterable[int]] = None):
+        """
+        Plot SSE for one or more component numbers.
+
+        The first panel shows the total SSE against the number of components, the
+        other three show the SSE aggregated per sample, per emission and per
+        excitation wavelength so that different component numbers can be compared.
+
+        :param f: int | Iterable, numbers of components. Defaults to the fitted models.
+        """
+        data = self.sse_analysis(f)
+        fs = sorted(data)
+        colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(fs)))
+        _ = plt.figure(figsize=(13, 8))
+        # fig.canvas.manager.set_window_title('SSE analysis')
+        ax = plt.subplot(2, 2, 1)
+        ax.plot(fs, [data[i]['total'] for i in fs], '-o', color='#1f77b4')
+        ax.set_yscale('log')
+        ax.set_xticks(fs)
+        ax.set_xlabel('Number of component', fontsize=11)
+        ax.set_ylabel('Total SSE', fontsize=11)
+        ax.set_title('Total SSE', fontsize=13)
+        panels = (
+            ('sample', 'SSE by sample', 'Sample', np.arange(1, self.nSample + 1)),
+            ('em', 'SSE by emission wavelength', 'Emission/nm', self.em),
+            ('ex', 'SSE by excitation wavelength', 'Excitation/nm', self.ex),
+        )
+        for index, (key, title, xlabel, xvalues) in enumerate(panels, start=2):
+            ax = plt.subplot(2, 2, index)
+            for color, fi in zip(colors, fs):
+                ax.plot(xvalues, data[fi][key], color=color, lw=1.5, label=f'{fi} components')
+            ax.set_xlabel(xlabel, fontsize=11)
+            ax.set_ylabel('SSE', fontsize=11)
+            ax.set_title(title, fontsize=13)
+            ax.legend(framealpha=0.6, fontsize=10, frameon=True, shadow=False)
+        plt.subplots_adjust(left=0.08, bottom=0.08, right=0.95, top=0.92, wspace=0.25, hspace=0.35)
 
     def split_analysis(
             self, f: Optional[int | Iterable[int]] = None,
@@ -551,6 +579,10 @@ class EEMsDataset:
             max_iter: int = 2500,
             starts: int = 10,
             random_state: Optional[int] = None,
+            *,
+            n_processes: Optional[int] = None,
+            progress=None,
+            stop_event=None,
     ):
         """
         Generate PARAFAC models nested in dataset splits. TCC above 0.95 can be validated.
@@ -558,123 +590,67 @@ class EEMsDataset:
 
         :param f: int, number of components
         :param random_state: {None(default), int, np.random.RandomState}
-        :param start: int, number of models to fit
+        :param starts: int, number of models to fit
+        :param n_processes: Optional, number of worker processes, defaults to min(starts, 8).
+        :param progress: Optional, callback called as progress(done, total, f).
+        :param stop_event: Optional, threading.Event used to cancel the job.
         """
-        if np.any(np.isnan(self.x)):
-            raise ValueError("x contains nan.")
         if f is None:
-            fs = self.fac_nums if self.fac_nums else range(2, 6)
             print('Parameter f is not given, use range(2, 6) instead.')
-        elif isinstance(f, int):
-            fs = (f,)
-        else:
-            fs = f
-        num_cores = os.cpu_count()
-        if num_cores is not None:
-            if num_cores >= starts:
-                n = starts
-            else:
-                n = 8
-        else:
-            n = 8
-
+        fs = _parafac.component_numbers(f, default=self.fac_nums if self.fac_nums else range(2, 6))
         print('Split analysis starts.')
-        index = np.arange(self.nSample)
-        rng = np.random.RandomState(random_state)
-        rng.shuffle(index)
-        cn = int(N_SPLIT * (N_SPLIT - 1) / 1 / 2)  # C(4, 2)
-        index_split = [index[i * self.nSample // N_SPLIT:(i + 1) * self.nSample // N_SPLIT] for i in range(N_SPLIT)]
-        splits = [self.x[i] for i in index_split]
-        results = {i: [[] for _ in range(cn)] for i in fs}
-
-        def callback1(rtn: tuple[CPTensor | tuple, int, int]):
-            print(f"A {rtn[1]}-component model has been fitted.")
-            results[rtn[1]][rtn[2] * 2].append(rtn[0])
-
-        def callback2(rtn: tuple[CPTensor | tuple, int, int]):
-            print(f"A {rtn[1]}-component model has been fitted.")
-            results[rtn[1]][rtn[2] * 2 + 1].append(rtn[0])
-
-        pool = Pool(n)
-        for j, (n1, n2) in enumerate(CROSS):
-            c_x1 = np.concatenate((splits[n1[0]], splits[n1[1]]), axis=0)
-            c_x2 = np.concatenate((splits[n2[0]], splits[n2[1]]), axis=0)
-            for fi in fs:
-                for _ in range(starts):
-                    pool.apply_async(
-                        self._non_parafac_once,
-                        args=(c_x1, fi, tol, max_iter),
-                        kwds={'j': j},
-                        callback=callback1,
-                        error_callback=lambda e: print(e),
-                    )
-                    pool.apply_async(
-                        self._non_parafac_once,
-                        args=(c_x2, fi, tol, max_iter),
-                        kwds={'j': j},
-                        callback=callback2,
-                        error_callback=lambda e: print(e),
-                    )
-        pool.close()
-        pool.join()
+        result = _parafac.split_fit(
+            self.x, self.factors, fs,
+            starts=starts, tol=tol, max_iter=max_iter, random_state=random_state,
+            n_processes=n_processes, progress=progress, stop_event=stop_event,
+        )
+        for line in result.log:
+            print(line)
         print("All fits end.")
-        # postprocess
-        self.split_result.clear()
-        for fi in fs:
-            for ji, jj in enumerate(results[fi]):
-                c1, c2 = divmod(ji, 2)
-                x = np.concatenate((splits[CROSS[c1][c2][0]], splits[CROSS[c1][c2][1]]), axis=0)
-                best_model = tlviz.multimodel_evaluation.get_model_with_lowest_error(jj, x)
-                best_model = tlviz.factor_tools.distribute_weights_in_one_mode(best_model, mode=0)
-                order = tlviz.factor_tools.get_factor_matrix_permutation(self.factors[fi][1][1], best_model[1][1])
-                best_model = tlviz.factor_tools.permute_cp_tensor(best_model, permutation=tuple(order))
-                results[fi][ji] = best_model  # type: ignore
-        self.split_result = results
+        self.split_result = result.split_result
 
     def split_validation(self, f: Optional[int | Iterable[int]] = None):
         if f is None:
-            fs = self.fac_nums if self.fac_nums else range(2, 6)
             print('Parameter f is not given, use range(2, 6) instead.')
-        elif isinstance(f, int):
-            fs = (f,)
-        else:
-            fs = f
+        fs = _parafac.component_numbers(f, default=self.fac_nums if self.fac_nums else range(2, 6))
         print("Split Validation Starts.")
+        report = _parafac.split_validation(self.factors, self.split_result, fs)
         for fi in fs:
             print(f'Split Validation for {fi}-component:')
-            ex_l = [
-                tlviz.factor_tools.cosine_similarity(
-                    self.factors[fi][1][2], ti[1][2]
-                )
-                for ti in self.split_result[fi]
-            ]
-            em_l = [
-                tlviz.factor_tools.cosine_similarity(
-                    self.factors[fi][1][1], ti[1][1]
-                )
-                for ti in self.split_result[fi]
-            ]
-            for i in range(len(CROSS)):
-                ex_l.append(
-                    tlviz.factor_tools.cosine_similarity(
-                        self.split_result[fi][2 * i][1][2],
-                        self.split_result[fi][2 * i + 1][1][2]
-                    )
-                )
-                em_l.append(
-                    tlviz.factor_tools.cosine_similarity(
-                        self.split_result[fi][2 * i][1][1],
-                        self.split_result[fi][2 * i + 1][1][1]
-                    )
-                )
-            m1 = min(ex_l)
-            m2 = min(em_l)
-            mm = min(m1, m2)
-            if mm >= 0.95:
+            if report[fi]['validated']:
                 print(f"Validated for all comparisons of {fi}-component.")
             else:
                 print(
-                    f"Not Validated for {fi}-component, the lowest TCC is {mm:.4f}")
+                    f"Not Validated for {fi}-component, the lowest TCC is {report[fi]['min_tcc']:.4f}")
+        return report
+
+    #  State snapshots
+    def snapshot(self) -> dict:
+        """Return a deep copy of the mutable state (used by the history timeline)."""
+        return take_snapshot(self)
+
+    def restore(self, snapshot: dict):
+        """Restore the mutable state in place from :meth:`snapshot` output."""
+        apply_snapshot(self, snapshot)
+
+    def copy(self) -> 'EEMsDataset':
+        """Return an independent copy of this dataset."""
+        new = EEMsDataset(
+            self.x.copy(), self.ex.copy(), self.em.copy(), self.file_list.copy()
+        )
+        new.x = self.x.copy()
+        new.i = self.i.copy()
+        new.iu = self.iu
+        new.blanked = self.blanked
+        new.ife = self.ife
+        new.fac_nums = list(self.fac_nums)
+        new.factors = dict(self.factors)
+        new.core_consistency = dict(self.core_consistency)
+        new.explanation_rate = dict(self.explanation_rate)
+        new.sse = dict(self.sse)
+        new.leverage = dict(self.leverage)
+        new.split_result = dict(self.split_result)
+        return new
 
     #  Plot Functions
 
@@ -797,7 +773,7 @@ class EEMsDataset:
             plt.title(f'Model {f} for Sample {i + 1}', fontsize=13)
             plt.colorbar()
             plt.subplot(1, 3, 3)
-            err = self.x[i] - model[f]
+            err = self.x[i] - model[i]
             plt.contourf(self.ex, self.em, err)
             plt.xlabel('Excitation/nm', fontsize=11)
             plt.ylabel('Emission/nm', fontsize=11)
@@ -966,39 +942,9 @@ class EEMsDataset:
             write_path = Path(os.getcwd()) / filename
         else:
             write_path = Path(output_path) / filename
-        ex_str = ''
-        for i in range(self.nex):
-            ex_str += f'EX\t{self.ex[i]}\t'
-            s = '\t'.join(f'{self.factors[f][1][2][i, j]}' for j in range(f))
-            ex_str = ex_str + s + '\n'
-        em_str = ''
-        for i in range(self.nem):
-            em_str += f'EM\t{self.em[i]}\t'
-            s = '\t'.join(f'{self.factors[f][1][1][i, j]}' for j in range(f))
-            em_str = em_str + s + '\n'
-        em_str = em_str[:-1]
-        name = kwargs.get('name', '')
-        creator = kwargs.get('creator', '')
-        email = kwargs.get('email', '')
-        doi = kwargs.get('doi', '')
-        reference = kwargs.get('reference', '')
-        fluorometer = kwargs.get('fluorometer', '')
-        sources = kwargs.get('sources', '')
-        ecozones = kwargs.get('ecozones', '')
-        method = kwargs.get('method', '')
-        preprocess = kwargs.get('preprocess', '')
-        description = kwargs.get('description', '')
-        with open(write_path, 'w') as fp:
-            fp.write(f'#\n# Fluorescence Model\n#\n'
-                     f'name\t{name}\ncreator\t{creator}\nemail\t{email}\ndoi\t{doi}\n'
-                     f'reference\t{reference}\nunit\t{self.iu}\ntoolbox\tEEM toolkit for Python\n'
-                     f'date\t{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n'
-                     f'fluorometer\t{fluorometer}\nnSample\t{self.nSample}\nconstraints\tnon-negativity\n'
-                     f'validation\tSplit-half analysis (S4C6T3)\nmethods\t{method}\n'
-                     f'preprocess\t{preprocess}\nsources\t{sources}\necozones\t{ecozones}\n'
-                     f'description\t{description}\n'
-                     f'#\n# Excitation/Emission (Ex, Em), wavelength (nm), component[n] (intensity)\n#\n'
-                     f'{ex_str}{em_str}')
+        content = _export.open_fluor_text(self, f, **kwargs)
+        with open(write_path, 'wb') as fp:
+            fp.write(content)
         print(f"Saved at {str(write_path)}")
 
     def eems_output(self, output_path: Optional[str] = None):
@@ -1009,16 +955,12 @@ class EEMsDataset:
             save in the current directory.
         """
         for i in range(self.nSample):
-            out = np.full((self.nem + 1, self.nex + 1), np.nan)
-            out[1:, 1:] = self.x[i]
-            out[0, 1:] = self.ex
-            out[1:, 0] = self.em
-            out = pd.DataFrame(out)
             if output_path is None:
                 file_name = Path(os.getcwd()) / f"{self.file_list[i]}.xlsx"
             else:
                 file_name = Path(output_path) / f"{self.file_list[i]}.xlsx"
-            out.to_excel(file_name, header=False, index=False)
+            with open(file_name, 'wb') as fp:
+                fp.write(_export.eem_xlsx_bytes(self, i))
             print(f'EEM {self.file_list[i]} is saved at {str(file_name)}. {i + 1} of {self.nSample}')
         print('All saved.')
 
@@ -1030,35 +972,12 @@ class EEMsDataset:
         :param output_path: Optional, the directory to save the text. If not given,
             save in the current directory.
         """
-        fmax = pd.DataFrame(
-            self.factors[f][1][0] * self.factors[f][1][1].max(axis=0) * self.factors[f][1][2].max(axis=0),
-            columns=[f'FMax{i + 1}' for i in range(f)])
-        fmax.insert(loc=0, column='EEM', value=self.file_list)
-        em_loadings = pd.DataFrame(self.factors[f][1][1], columns=[f'Em{i + 1}' for i in range(f)])
-        em_loadings.insert(loc=0, column='Em', value=self.em)
-        ex_loadings = pd.DataFrame(self.factors[f][1][2], columns=[f'Ex{i + 1}' for i in range(f)])
-        ex_loadings.insert(loc=0, column='Ex', value=self.ex)
-        out_model = []
-        for i in range(f):
-            out = np.full((self.nem + 1, self.nex + 1), np.nan)
-            j = np.outer(
-                self.factors[f][1][1][:, i],
-                self.factors[f][1][2][:, i]
-            )
-            out[1:, 1:] = j
-            out[0, 1:] = self.ex
-            out[1:, 0] = self.em
-            out_model.append(pd.DataFrame(out))
         if output_path is None:
             file_name = Path(os.getcwd()) / filename
         else:
             file_name = Path(output_path) / filename
-        with pd.ExcelWriter(file_name) as writer:
-            fmax.to_excel(writer, sheet_name='FMax', index=False)
-            em_loadings.to_excel(writer, sheet_name='Em loadings', index=False)
-            ex_loadings.to_excel(writer, sheet_name='Ex loadings', index=False)
-            for j in range(len(out_model)):
-                out_model[j].to_excel(writer, sheet_name=f'C{j + 1}', header=False, index=False)
+        with open(file_name, 'wb') as fp:
+            fp.write(_export.parafac_xlsx_bytes(self, f))
         print(f'PARAFAC result saved at {str(file_name)}')
 
     def fri_result_output(self, output_path: Optional[str] = None, filename: str = 'FRI.xlsx'):
@@ -1068,21 +987,12 @@ class EEMsDataset:
         :param output_path: Optional, the directory to save the text. If not given,
             save in the current directory.
         """
-        p, phi, mf = self._fluorescence_regional_integration()
-        cols = np.arange(1, 6)
-        pfr = pd.DataFrame(p, columns=cols)
-        pfr.insert(loc=0, column='Sample', value=self.file_list)
-        volume = pd.DataFrame(phi, columns=cols)
-        volume.insert(loc=0, column='Sample', value=self.file_list)
-        mf = pd.DataFrame(mf, columns=cols)
         if output_path is None:
             file_name = Path(os.getcwd()) / filename
         else:
             file_name = Path(output_path) / filename
-        with pd.ExcelWriter(file_name) as writer:
-            pfr.to_excel(writer, sheet_name='percent fluorescence response', index=False)
-            volume.to_excel(writer, sheet_name='volume', index=False)
-            mf.to_excel(writer, sheet_name='multiplication factor', index=False)
+        with open(file_name, 'wb') as fp:
+            fp.write(_export.fri_xlsx_bytes(self))
         print(f'FRI result saved at {str(file_name)}')
 
     def fluorescence_indices_output(self, output_path: Optional[str] = None, output_name: str = 'fluorescence_indices.xlsx'):
@@ -1092,10 +1002,10 @@ class EEMsDataset:
         :param output_path: Optional, the directory to save the text. If not given,
             save in the current directory.
         """
-        df = self._pick_fluorescence_indices()
         if output_path is None:
             file_name = Path(os.getcwd()) / output_name
         else:
             file_name = Path(output_path) / output_name
-        df.to_excel(file_name, index=False)
+        with open(file_name, 'wb') as fp:
+            fp.write(_export.indices_xlsx_bytes(self))
         print(f'Flu Indices result saved at {str(file_name)}')

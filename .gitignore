@@ -1,6 +1,10 @@
 /.venv/
+/.trae/
+/.screenshots/
 /.idea/
 *__pycache__/
 /drop/
 /dist/
 */EEMs_toolkit.egg-info/
+/frontend/node_modules/
+/src/EEMs_toolkit/web/static/

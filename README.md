@@ -1,168 +1,117 @@
-- [EEMs-toolkit - 0.2.0](#eems-toolkit---020)
-  - [开发环境](#开发环境)
-  - [安装EEMs-toolkit](#安装eems-toolkit)
-  - [功能简介](#功能简介)
-    - [1. 数据导入](#1-数据导入)
-    - [2. 预处理](#2-预处理)
-      - [2.1 内滤效应校正](#21-内滤效应校正)
-      - [2.2 扣除空白](#22-扣除空白)
-      - [2.3 拉曼单位化](#23-拉曼单位化)
-      - [2.4 去除不需要的波长部分](#24-去除不需要的波长部分)
-      - [2.5 稀释因子校正](#25-稀释因子校正)
-      - [2.6 去除瑞丽（Rayleigh）散射和拉曼（Raman）散射](#26-去除瑞丽rayleigh散射和拉曼raman散射)
-      - [2.7 缺失值插值](#27-缺失值插值)
-      - [（可选）荧光矩阵平滑（高斯核）](#可选荧光矩阵平滑高斯核)
-    - [3. PARAFAC分析](#3-parafac分析)
-    - [4. 结果](#4-结果)
-    - [5. 其他功能](#5-其他功能)
-  - [测试示例](#测试示例)
-  - [Releases 中应用程序教程](#releases-中应用程序教程)
-  - [引用 Cite](#引用-cite)
-  - [Star History](#star-history)
+[English](README.md) | [中文文档](README.zh-CN.md)
 
+# EEMs-toolkit - 0.3.0
 
-# EEMs-toolkit - 0.2.0
+EEMs-toolkit is a Python toolkit for analysing excitation–emission matrix (EEM) fluorescence data with
+parallel factor analysis (PARAFAC). Its feature set is roughly comparable to the MATLAB drEEM toolbox.
 
-EEMs-toolkit是一个可以在Python上对三维荧光（EEM）进行平行因子分析（PARAFAC）的工具包，功能大致类似于MATLAB的drEEM toolbox。
+It can be used in notebooks/scripts (matplotlib figures) or through an optional local web interface
+(Plotly.js figures, Chinese/English UI).
 
+API reference (auto-generated from source): [English](docs/API.md) / [中文](docs/API.zh-CN.md)
 
+## Features
 
+- **Data import**: EEM samples, absorbance spectra, blank samples and a sample log.
+- **Preprocessing**: inner filter effect correction, blank subtraction, Raman normalisation (AU → RU),
+  sample/wavelength cropping, dilution correction, Rayleigh/Raman scatter removal, missing-value
+  interpolation (Delaunay), optional Gaussian smoothing.
+- **PARAFAC**: non-negative models for one or more component numbers, multiple random starts,
+  core consistency / explained variance, residuals, SSE analysis across component numbers
+  (total and aggregated per sample / emission / excitation), leverage–SSE outlier diagnostics,
+  sample exclusion, split-half analysis and validation (S4C6T3).
+- **Results**: FMax, Ex/Em loadings, component “fingerprints”, OpenFluor text export and Excel export.
+- **Other analyses**: fluorescence indices (FLUI, FREI, HIX, BIX), fluorescence regional integration
+  (FRI, five regions), spectral slope / SR from absorbance spectra.
+- **Projects**: save the whole session (data, preprocessing history, models) as a `.eemproj` file and
+  reload it later.
 
+## Installation
 
-## 开发环境
-
-Windows 10，Python 3.11.7，采用的额外的包及版本见下表：
-
-|     包     |  版本  |
-| :--------: | :----: |
-|   numpy    | 2.4.6  |
-|   pandas   | 3.1.1  |
-| matplotlib | 3.11.2 |
-|   scipy    | 1.17.1 |
-|  tensorly  | 0.10.0 |
-|   tlviz    | 0.1.1  |
-|   xlrd     | 2.0.2  |
-|  openpyxl  | 3.1.5  |
-
-------
-## 安装EEMs-toolkit
-```python
+```bash
 pip install EEMs-toolkit
 ```
 
+## Optional web interface
 
-## 功能简介
+```bash
+pip install "EEMs-toolkit[web]"
+eems-web                 # default http://127.0.0.1:8000
+eems-web --port 8080     # custom port
+eems-web --no-browser    # do not open a browser automatically
+```
 
-### 1. 数据导入
+The web interface covers the full workflow: import → preprocessing (live preview, previous-step
+comparison, restore to any history state) → PARAFAC (background jobs that can be stopped) →
+split-half validation → indices / FRI / spectral slope → export → project save/load.
 
-   - 样本导入
-   - 空白导入
-   - 紫外光谱导入
+- **Bilingual UI**: switch between 中文 and English with the selector in the top-right header.
+  The choice is remembered in the browser; the first visit follows the browser language.
+  Element Plus widgets (dialogs, date/number controls, etc.) follow the same locale.
+- **Charts**: rendered with Plotly.js. EEMs are drawn as filled contour plots with contour lines
+  (no smoothing), with an adjustable contour-level count (0 = automatic).
+  A 3D surface view is available on the preprocessing page.
+- Every chart can be exported as PNG / JPEG / SVG; the raster resolution is chosen as explicit pixel
+  dimensions (e.g. 844 × 784). Legends are shown by default and each chart has a legend on/off switch.
+- The FRI plot uses Em on the x-axis and Ex on the y-axis, with the five regions and Ⅰ–Ⅴ labels drawn.
+- The history timeline supports restoring any step and deleting a step together with all later steps.
+- Inner filter correction, blank subtraction and Raman normalisation can only be applied once;
+  both the UI and the API reject repeated execution. Use the history timeline to undo first.
+- Missing values remaining after interpolation are reported and treated as 0 during PARAFAC fitting.
+- The import page offers a demo zip (`eem/`, `abs/`, `blank/`, `SampleLog.xlsx`) so the full workflow
+  can be tried immediately.
+- The server listens on `127.0.0.1` only and has no user system; it is intended for single-machine use.
 
-### 2. 预处理
+### Navigation
 
-#### 2.1 内滤效应校正
+1. **Data import** – upload folders/files or a zip package, or load an existing project.
+2. **Preprocessing** – all correction steps with live preview and a history timeline.
+3. **PARAFAC analysis** – separate pages for 3.1 modelling, 3.2 outlier detection, 3.3 split-half
+   validation and 3.4 results & export.
+4. **Indices / FRI / slope** – result tables, charts and Excel downloads.
+5. **Project save & export** – save/load `.eemproj` projects and download selected results.
 
-原始数据
+### Building the frontend (only when developing from source)
 
-![raw](/pictures/raw.png)
+```bash
+cd frontend
+npm install
+npm run build
+```
 
+The build output is written to `src/EEMs_toolkit/web/static/` and bundled into the wheel.
+If this directory is missing, `eems-web` prints a hint.
 
-校正后
+## Development environment
 
-![after_ife](/pictures/after_ife.png)
+Windows 10, Python 3.11.7. Main dependencies:
 
-#### 2.2 扣除空白
+|   Package  | Version |
+| :--------: | :-----: |
+|    numpy   |  2.4.6  |
+|   pandas   |  3.1.1  |
+| matplotlib |  3.11.2 |
+|    scipy   |  1.17.1 |
+|  tensorly  |  0.10.0 |
+|    xlrd    |  2.0.2  |
+|  openpyxl  |  3.1.5  |
 
-![blanked](/pictures/blanked.png)
+Web frontend: Vue 3, TypeScript, Element Plus, Plotly.js, vue-i18n.
 
-#### 2.3 拉曼单位化
+## Examples
 
-![raman_unit](/pictures/raman_unit.png)
+See `demo1.ipynb` and the `Example/` folder (`Example/demo.xlsx` contains 14 samples).
 
-#### 2.4 去除不需要的波长部分
+## GUI tutorial (releases)
 
-![subdataset](/pictures/subdataset.png)
+[EEMs-toolkit GUI video tutorial (Chinese)](https://zhuanlan.zhihu.com/p/605396414)
 
-#### 2.5 稀释因子校正
+## Cite
 
-![diluted](/pictures/diluted.png)
+Machine Learning-Assisted Source Tracing in Domestic-Industrial Wastewater: A Fluorescence
+Information-Based Approach
+DOI: 10.1016/j.watres.2024.122618
 
-#### 2.6 去除瑞丽（Rayleigh）散射和拉曼（Raman）散射
-
-![cut_scatter](/pictures/cut_scatter.png)
-
-#### 2.7 缺失值插值
-
-![interpolate](/pictures/interpolate.png)
-
-#### （可选）荧光矩阵平滑（高斯核）
-
-![smoothed](/pictures/smoothed.png)
-
-### 3. PARAFAC分析
-
-- 采用非负约束计算不同组分数的模型
-- 绘制异常样本测试图
-
-![outlier_plot](pictures/outlier_plot.png)
-
-- 去除异常样本
-- 重新计算模型，再次绘制异常样本测试图
-- 观察残差、核一致性……
-
-![residual](/pictures/residual.png)
-![cc_er](/pictures/cc_er.png)
-
-- 运行分半分析（S4C6T3）
-- 分半检验
-
-![split_analysis_plot](/pictures/split_analysis_plot.png)
-
-- 确认组分数
-
-
-### 4. 结果
-
-
-- 组分图绘制
-
-![fingers](/pictures/fingers.png)
-
-- 载荷图绘制
-
-![loadings](/pictures/loadings.png)
-
-- 模型结果导出，包括FMax，Em loadings，Ex loadings，组分图数据
-
-### 5. 其他功能
-
-   - 预处理后样本数据导出
-
-   - OpenFluor文件导出，可上传对比数据库
-
-   - 区域积分（FRI）计算，结果导出
-   - 荧光指数（Fluorescence index、Freshness index、Humification index，Biological index）计算，结果导出
-   - 光谱斜率SR计算，结果导出
-
-------
-
-
-
-## 测试示例
-
-见 `demo1.ipynb`
-   
-## Releases 中应用程序教程
-   [EEMs-toolkit GUI 视频教程](https://zhuanlan.zhihu.com/p/605396414)
-
-## 引用 Cite
-   Machine Learning-Assisted Source Tracing in Domestic-Industrial Wastewater: A Fluorescence Information-Based Approach  
-   DOI: 10.1016/j.watres.2024.122618
-   
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HHhyJJ/EEMs-toolkit&type=Date)](https://star-history.com/#HHhyJJ/EEMs-toolkit&Date)
-
-
-
+[![Star History Chart](https://api.star-history.com/svg?repos=HHhyJJ/EEMs-toolkit\&type=Date)](https://star-history.com/#HHhyJJ/EEMs-toolkit\&Date)
